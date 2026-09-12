@@ -11,9 +11,11 @@ the current, working state of the project.
   settings persistence, and startup live in `server.js`.
 - The browser UI is served directly from `public/`; there is no build step, bundler,
   framework, or generated frontend output.
-- The repository has one commit, `Initial commit`, containing only the original
-  README addition. The more detailed implementation history below comes from the
-  session changelog and the current source, not from a sequence of Git commits.
+- The active branch is `initial`, pushed to `origin/initial` at commit `2e722e8`
+  (`Initial folder diff app`), based on the original `main` README commit.
+- Current uncommitted user fixture changes are present in `sample/folder-a/README.md`,
+  `sample/folder-a/src/util.js`, `sample/folder-b/README.md`, plus untracked `.vs/`.
+  Preserve them; do not reset or revert them.
 
 ## 1. What this project is
 
@@ -29,8 +31,8 @@ Status: **complete and verified** (see §7). No known bugs outstanding.
 - Project root: `C:\Source\socha-diff`
 - OS developed on: Windows. Paths in examples use backslashes.
 - Node.js: developed on **v22.21.1** (needs 18+). npm 10.
-- Not a git repository yet. To start version control: `git init` (a `.gitignore`
-  excluding `node_modules/` already exists).
+- Git is initialized. The published development snapshot is on `initial`; the worktree
+  may contain fixture edits that are intentionally not committed yet.
 
 ## 3. Tech stack & dependencies
 
@@ -44,7 +46,7 @@ Install with `npm install` (creates `node_modules/`, already present locally).
 ## 4. How to run
 
 ```sh
-cd C:\Users\michael.socha\Desktop\folder-diff-app
+cd C:\Source\socha-diff
 npm install      # first time only
 npm start        # => node server.js
 ```
@@ -175,7 +177,8 @@ node -e "console.log(require('./lib/compare').compareFolders('sample/folder-a','
 
 ## 9. Known limitations
 
-- Highlighting is **line-level**, not intra-line/word-level.
+- Replacement rows also have character-level highlighting; extremely large lines
+  use a cheaper fallback instead of a full character-level matrix.
 - Text assumed **UTF-8**; other encodings may mis-render (still safe — binary
   files are detected and skipped).
 - Symlinks are skipped (no following, avoids cycles).
@@ -418,4 +421,114 @@ slice, then expanded after each behavior was manually checked:
   served fresh on reload without restart.
 - Large results are intentionally NOT persisted across nav (see 11.7). Small ones are.
 - `identicalCount` is retained for back-compat but `identical[]` is the list the UI uses.
+
+---
+
+# 13. Conversation decisions and preferences (authoritative)
+
+This section summarizes the complete product, structural, visual, and engineering
+decisions established during the chat. Preserve these choices unless the user
+explicitly changes them.
+
+## 13.1 Product behavior
+
+- The app compares arbitrary local Folder A and Folder B paths, stays localhost-only,
+  and presents categorized results with side-by-side as the default and unified as
+  an alternate client-side view.
+- Ignore-whitespace defaults to enabled and removes all whitespace from the
+  authoritative content comparison, including spaces, tabs, blank lines, and CRLF/LF.
+  When enabled, unmatched whitespace-only line rows are also removed from the display;
+  genuine content changes remain visible. When disabled, whitespace differences show.
+- Settings are auto-saved to `.folder-diff-settings.json`; excluded directories are
+  normalized, deduplicated, case-insensitive directory names. Last paths use the
+  separate `.folder-diff-state.json` file.
+- The header awareness indicator and Settings modal checkbox must always represent the
+  same `ignoreWhitespace` value. The server-side settings file is authoritative after
+  load; session restoration must not race or overwrite that value.
+- Settings changes are compared with the settings snapshot used for the last Compare.
+  The pending indicator over Compare appears only when values differ, survives small
+  result session restoration, and disappears when values return to the last-run state
+  or a successful Compare completes.
+
+## 13.2 Diff display and interaction
+
+- Replacement rows use character-level matching. Characters common to both sides keep
+  the normal red (A) or green (B) line color; changed characters use a stronger,
+  lighter translucent overlay. In ignore-whitespace mode, whitespace characters are
+  common and must never receive the changed-character overlay.
+- Side-by-side panes are separate selection scopes. Drag/copy cannot cross A and B,
+  `Ctrl+A` selects all text in the clicked or focused pane, and copied text remains
+  verbatim. Unified view uses the shared rows and disables text selection.
+- Gap markers stay at their original position when expanded. Expanded markers explain
+  that they can be clicked to hide the unchanged lines again; clicking toggles them
+  in both side-by-side and unified views.
+- Side-by-side has independent horizontal bars. Unified reserves equivalent scrollbar
+  space and reveals the scrollbar visually on hover. Long diff text does not wrap.
+- Results render lazily for large sets, clean up per-file resize listeners, and skip
+  session persistence for oversized result payloads.
+- The A/B path header is a two-column grid aligned with the diff panes. A: and B: use
+  the same 48px right-aligned gutter geometry as their line-number columns.
+
+## 13.3 Settings, icons, tooltips, and motion
+
+- The Settings button opens the in-page dialog by click or exact `Ctrl+S`. Its tooltip
+  and the whitespace-awareness tooltip follow the mouse, sit 3px above and 20px left
+  of the cursor, and support keyboard focus.
+- The pending-settings indicator is a small four-point star over Compare's upper-right
+  corner. It uses the same amber/panel shading as the whitespace-aware indicator. Its
+  tooltip uses the same vertical offset and a 20px right-side cursor offset.
+- The whitespace display button is labeled `Whitespace chars` with an eye icon. The
+  eye is open when marks are shown and a wider, gently closed eye when hidden. Its
+  painted glyph uses transform-only scaling so button dimensions and neighboring text
+  alignment do not change. Both states share the same -1px Y position to avoid jumps.
+  The eye transition is 0.8s; initial page/session restoration disables the transition
+  and enables it after initialization so loading never animates.
+- The stale-content dialog uses a red error `✖` icon and has only an OK button; it
+  states that Match was aborted and requires a new Compare. The mirroring confirmation
+  dialog uses an amber warning icon with explicit OK and Cancel buttons.
+- Avoid transient “checking folder contents” text that shifts the page. Real errors,
+  completion results, and settings status messages may use the existing status area.
+  Settings status fades after five seconds with a brief, restrained multi-directional
+  jitter; keep motion subtle and purposeful.
+
+## 13.4 Mirroring safety
+
+- Make A/B match is comparison-scoped: overwrite differing/binary files, create
+  source-only files, delete target-only files, and never touch identical or
+  whitespace-only files while whitespace is ignored.
+- Compare results include deterministic SHA-256 content hashes for A and B, computed
+  from sorted relative paths and file bytes using the same ignored-directory walker.
+  Hashes persist with the session result.
+- Match first calls `/api/sync/check`. If either folder changed, show the red-error
+  OK-only modal and abort. If unchanged, show the amber OK/Cancel mirroring modal.
+  The server rechecks hashes immediately before mutation to catch confirmation races.
+- Native browser `alert`/`confirm` prompts are not used for these flows.
+
+## 13.5 Engineering and design preferences
+
+- Keep the vanilla Node/Express plus static HTML/CSS/JS architecture. No framework,
+  bundler, build step, or broad redesign. Prefer existing helpers and local patterns.
+- Preserve the dark, restrained operational-tool aesthetic and current color semantics:
+  red for A/deletions/errors, green for B/additions, amber for awareness/warnings,
+  and restrained blue for primary actions.
+- Prefer compact, familiar controls and custom tooltips with deliberate viewport-safe
+  positioning. Avoid layout shifts, clipped tooltips, nested decorative cards, and
+  unrelated visual flourishes.
+- Keep file content inert with `textContent`; preserve exact copied whitespace. Use
+  `apply_patch` for edits, sparse comments, ASCII by default, and visible Unicode only
+  when it is an intentional UI glyph.
+- Preserve user edits and dirty worktrees; never reset or revert unrelated changes.
+  Validate JavaScript with `node --check` and use focused Node/browser checks for
+  behavior. Port 3000 may already be occupied by an older `node server.js`; restart
+  that process when server-side edits need to be exercised.
+
+## 13.6 Recent verification state
+
+- Verified comparison hashes exclude ignored directories and change for visible-file
+  edits. Stale Match operations are blocked before mutation.
+- Verified OK-only stale-content and OK/Cancel mirroring dialogs, reversible gap
+  expansion, side-by-side Ctrl+A selection, character-level contrast, whitespace-aware
+  EOL rendering, and the eye icon's no-animation initial load.
+- The `initial` branch was explicitly created and pushed to `origin/initial`; no new
+  commit should be made unless requested.
 

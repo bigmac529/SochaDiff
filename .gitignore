@@ -2,3 +2,4 @@ node_modules/
 npm-debug.log*
 .folder-diff-state.json
 .folder-diff-settings.json
+.vs
