@@ -1,0 +1,14 @@
+{
+  "name": "folder-diff-app",
+  "version": "1.0.0",
+  "description": "Web app that shows all non-whitespace differences between two folders.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "diff": "^5.2.0",
+    "express": "^4.19.2"
+  }
+}
