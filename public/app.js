@@ -364,25 +364,32 @@ function autoScrollStep() {
   dragRaf = requestAnimationFrame(autoScrollStep);
 }
 
+function setDragSelecting(on) {
+  dragSelecting = !!on;
+  document.documentElement.classList.toggle("drag-selecting", dragSelecting);
+  document.body.classList.toggle("drag-selecting", dragSelecting);
+}
+
 document.addEventListener("mousedown", (event) => {
   selectionScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
   wholeFileScope = null;
   proximityGapIndices = new Set();
   dragAnchorRowIndex = -1;
   clearSelectionVisuals();
+  setDragSelecting(false);
   if (selectionScope && event.button === 0) {
     const anchorTr = event.target instanceof Element ? event.target.closest("tr") : null;
     dragAnchorRowIndex = anchorTr ? Array.from(selectionScope.querySelectorAll("tbody > tr")).indexOf(anchorTr) : -1;
     dragPanScroll = panScrollForScope(selectionScope);
-    if (dragPanScroll) {
-      dragSelecting = true;
-      document.body.classList.add("drag-selecting");
-      dragPointer.x = event.clientX;
-      dragPointer.y = event.clientY;
-      if (!dragRaf) dragRaf = requestAnimationFrame(autoScrollStep);
-    }
+    // Cursor lock is independent of the pan scrollbar: any primary-button
+    // mousedown in a pane is a selection drag and must keep the I-beam over
+    // collapsed gaps. Auto-scroll still needs the bar.
+    setDragSelecting(true);
+    dragPointer.x = event.clientX;
+    dragPointer.y = event.clientY;
+    if (dragPanScroll && !dragRaf) dragRaf = requestAnimationFrame(autoScrollStep);
   }
-});
+}, true);
 
 document.addEventListener("mousemove", (event) => {
   if (!dragSelecting) return;
@@ -402,14 +409,13 @@ document.addEventListener("contextmenu", (event) => {
 });
 
 document.addEventListener("mouseup", () => {
-  dragSelecting = false;
-  document.body.classList.remove("drag-selecting");
+  setDragSelecting(false);
   dragPanScroll = null;
   if (dragRaf) {
     cancelAnimationFrame(dragRaf);
     dragRaf = 0;
   }
-});
+}, true);
 
 // Keep any mouse-driven selection inside the A or B region where it began.
 document.addEventListener("selectionchange", () => {

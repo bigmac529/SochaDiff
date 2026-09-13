@@ -1251,15 +1251,30 @@ tr.gap td {
   user-select: none;
 }
 
-tr.gap-toggle td {
+/* Expand-hand only when the pointer is free to click the gap. Blink keeps an
+   explicit cursor:pointer during native text selection, so this must not apply
+   while drag-selecting or the I-beam flips to a hand over collapsed gaps. */
+body:not(.drag-selecting) tr.gap-toggle td {
   cursor: pointer;
 }
 
-/* While drag-selecting, force the text I-beam everywhere (matching native
-   text-selection). Otherwise the cursor flips to a pointer over the gap or the
-   file-diff summary even though a selection is active and clicking is disabled. */
+/* While drag-selecting, keep a stable I-beam (matching native text-selection)
+   over gaps, the file-diff summary, and everything else. Subject-matching
+   gap/summary rules sit alongside the universal override so table cells are
+   not left on cursor:pointer. */
 body.drag-selecting,
-body.drag-selecting * {
+body.drag-selecting *,
+html.drag-selecting,
+html.drag-selecting * {
+  cursor: text !important;
+}
+
+body.drag-selecting tr.gap-toggle,
+body.drag-selecting tr.gap-toggle td,
+body.drag-selecting .file-diff > summary,
+html.drag-selecting tr.gap-toggle,
+html.drag-selecting tr.gap-toggle td,
+html.drag-selecting .file-diff > summary {
   cursor: text !important;
 }
 
