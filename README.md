@@ -74,6 +74,17 @@ You can prefill and auto-run a comparison via query parameters:
 - `run=1` — compare automatically on load
 - `view=unified` — start in unified view (default is side-by-side)
 
+
+## Selection smoke tests
+
+Chaotic drag-path coverage for side-by-side selection (no cross-pane bleed, gap arming, blank rows, reverse drags):
+
+```sh
+npm run test:selection
+```
+
+Requires Playwright Chromium once (`npx playwright install chromium`). If browsers are missing, the script soft-skips with install instructions instead of failing the run. The harness starts `server.js` on an ephemeral port and uses `sample/sel-*` and `sample/blank-*` fixtures.
+
 ## Project layout
 
 ```
