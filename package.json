@@ -1,0 +1,15 @@
+{
+  "name": "socha-diff-app",
+  "version": "1.0.0",
+  "description": "Folder difference and mirroring tool.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "prestart": "node scripts/free-port.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "diff": "^5.2.0",
+    "express": "^4.19.2"
+  }
+}

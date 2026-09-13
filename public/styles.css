@@ -1,0 +1,1271 @@
+:root {
+  --bg: #10151d;
+  --panel: #161b22;
+  --panel-2: #1c2230;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #2f81f7;
+  --add-bg: #103a26;
+  --add-border: #2ea043;
+  --del-bg: #3d1418;
+  --del-border: #da3633;
+  --rep-bg: #3a2f10;
+  --rep-border: #d29922;
+  --num: #6e7681;
+  --gap: #21262d;
+  /* Fully opaque so selection indicators never blend with what's underneath. */
+  --selection-tint: color-mix(in srgb, var(--accent) 45%, var(--panel));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.app-header {
+  padding: 24px 24px 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.settings-link {
+  position: relative;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.settings-link:hover {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.header-tooltip {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 8px);
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+
+.header-tooltip-top {
+  top: auto;
+  bottom: calc(100% + 3px);
+}
+
+.header-tooltip-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  transform: translate(-100%, -100%) translateY(-2px);
+}
+
+.header-tooltip-cursor-right {
+  transform: translate(0, -100%) translateY(-2px);
+}
+
+.settings-link:hover .header-tooltip,
+.settings-link:focus-visible .header-tooltip,
+.ws-indicator:hover .header-tooltip,
+.ws-indicator:focus-visible .header-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.settings-link:hover .header-tooltip-cursor,
+.settings-link:focus-visible .header-tooltip-cursor,
+.ws-indicator:hover .header-tooltip-cursor,
+.ws-indicator:focus-visible .header-tooltip-cursor {
+  transform: translate(-100%, -100%) translateY(0);
+}
+
+.settings-link:hover .header-tooltip-cursor-right,
+.settings-link:focus-visible .header-tooltip-cursor-right,
+.ws-indicator:hover .header-tooltip-cursor-right,
+.ws-indicator:focus-visible .header-tooltip-cursor-right,
+.compare-pending-indicator:hover .header-tooltip-cursor-right,
+.compare-pending-indicator:focus-visible .header-tooltip-cursor-right {
+  transform: translate(0, -100%) translateY(0);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.ws-indicator {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ws-indicator:hover {
+  color: var(--text);
+}
+
+.ws-indicator:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.ws-indicator-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  font-weight: 700;
+}
+
+.ws-indicator.ws-on .ws-indicator-icon {
+  color: var(--add-border);
+  border-color: var(--add-border);
+}
+
+.ws-indicator.ws-off .ws-indicator-icon {
+  color: var(--rep-border);
+  border-color: var(--rep-border);
+}
+
+/* Scale just the keyboard glyph in the settings-shortcut tooltip; a transform
+   doesn't affect layout, so the box's footprint and neighbors stay put. */
+#settings-shortcut-tooltip .ws-indicator-icon {
+  border: none;
+  background: transparent;
+  /* translateY listed first so its shift stays literal (unscaled) despite the scale that follows. */
+  transform: translateY(-1px) scaleY(1.3) scaleX(2);
+  transform-origin: center;
+}
+
+main {
+  width: 100%;
+  max-width: none;
+  padding: 16px 24px 48px;
+  margin: 0;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+#compare-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+  align-items: end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.field input {
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(47, 129, 247, 0.3);
+}
+
+.actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.sync-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.sync-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.sync-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.settings-panel {
+  margin-top: 12px;
+}
+
+.settings-panel summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  max-width: 560px;
+}
+
+.settings-page-panel .settings-content {
+  margin-top: 0;
+}
+
+.settings-content label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings-section-label {
+  margin-top: 16px;
+}
+
+.settings-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-content textarea {
+  width: 100%;
+  resize: vertical;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font: 12px/1.5 ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+
+.settings-content textarea:hover {
+  scrollbar-color: rgba(230, 237, 243, 0.32) transparent;
+}
+
+.settings-content textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-content textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-content textarea::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.settings-content textarea::-webkit-scrollbar-thumb:hover {
+  background: rgba(230, 237, 243, 0.48);
+}
+
+.settings-content textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(47, 129, 247, 0.3);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-status {
+  color: var(--muted);
+  font-size: 13px;
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+@keyframes settings-status-jitter-fade {
+  0% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  12% {
+    transform: translate(-0.75px, 0.5px);
+  }
+  24% {
+    transform: translate(0.5px, -0.75px);
+  }
+  36% {
+    transform: translate(-0.5px, -0.5px);
+  }
+  48% {
+    transform: translate(0.75px, 0.5px);
+    opacity: 1;
+  }
+  60% {
+    transform: translate(-0.5px, 0.5px);
+    opacity: 1;
+  }
+  72% {
+    transform: translate(0.5px, -0.25px);
+    opacity: 0.85;
+  }
+  84% {
+    transform: translate(-0.5px, -0.5px);
+    opacity: 0.45;
+  }
+  100% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+}
+
+.settings-status.fade-out {
+  animation: settings-status-jitter-fade 300ms ease-in-out forwards;
+}
+
+.settings-status.error {
+  color: var(--del-border);
+}
+
+.settings-dialog {
+  width: min(560px, calc(100vw - 32px));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 20px;
+}
+
+.settings-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.settings-dialog .settings-content {
+  margin-top: 12px;
+  max-width: none;
+}
+
+.content-changed-dialog {
+  max-width: min(480px, calc(100vw - 32px));
+}
+
+.content-changed-icon {
+  color: var(--rep-border);
+  font-size: 0.9em;
+}
+
+.content-changed-error-icon {
+  color: var(--del-border);
+}
+
+.content-changed-actions {
+  justify-content: flex-end;
+}
+
+/* Error dialog only: more breathing room above the OK button, a bigger
+   click target, centered horizontally. */
+#error-dialog .content-changed-actions {
+  margin-top: 20px;
+  justify-content: center;
+}
+
+#error-dialog-ok-btn {
+  width: 107px;
+}
+
+/* Small, titleless toast for transient/final status text; fixed position so
+   it never shifts page layout when it appears or disappears. */
+.info-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
+}
+
+.info-toast.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
+
+.info-toast-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: info-toast-spin 0.7s linear infinite;
+}
+
+@keyframes info-toast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.settings-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-dialog-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.settings-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.settings-close-btn:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+button {
+  cursor: pointer;
+  font-size: 14px;
+}
+
+#compare-btn,
+#save-settings-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 9px 20px;
+  font-weight: 600;
+}
+
+.compare-button-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.compare-pending-indicator {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--rep-border);
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--rep-border);
+  font-size: 10px;
+  line-height: 1;
+  cursor: default;
+}
+
+.compare-pending-indicator[hidden] {
+  display: none;
+}
+
+.compare-pending-indicator:focus-visible {
+  outline: 2px solid var(--rep-border);
+  outline-offset: 2px;
+}
+
+.compare-pending-indicator:hover .header-tooltip,
+.compare-pending-indicator:focus-visible .header-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+#compare-btn:disabled,
+#save-settings-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.secondary-btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 16px;
+}
+
+.secondary-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.primary-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 9px 16px;
+}
+
+.primary-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.toggle-btn {
+  background: var(--panel-2);
+  color: var(--muted);
+  border: none;
+  padding: 8px 14px;
+}
+
+.toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ws-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.whitespace-eye {
+  display: inline-block;
+  font-size: 16px;
+  line-height: 1;
+  transform: translateY(-1px) scale(1.8, 1.8);
+  transform-origin: center;
+  transition: transform 0.8s ease;
+}
+
+.whitespace-eye.no-transition {
+  transition: none;
+}
+
+.whitespace-eye.closed {
+  transform: translateY(-1px) scale(1.8, 0.68);
+}
+
+.ws-toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.ws-mark {
+  position: relative;
+}
+
+.ws-space::before,
+.ws-tab::before {
+  position: absolute;
+  top: 0;
+  color: var(--num);
+  pointer-events: none;
+}
+
+.ws-space::before {
+  content: "\00B7";
+  left: 0;
+  right: 0;
+  text-align: center;
+}
+
+.ws-tab::before {
+  content: "\2192";
+  left: 2px;
+}
+
+.ws-ctrl {
+  color: var(--num);
+}
+
+.ws-ctrl::before {
+  content: attr(data-glyph);
+  color: var(--num);
+  pointer-events: none;
+}
+
+.ws-eol::after {
+  content: attr(data-eol);
+  color: var(--num);
+  pointer-events: none;
+  /* Stretch vertically only, scaling from its own center so the glyph's
+     midpoint stays anchored to the text line's vertical middle. */
+  display: inline-block;
+  transform: scaleY(1.6);
+  transform-origin: center;
+}
+
+/* The CRLF arrow's default strokes render thinner than the LF arrow's; bulk it up to match. */
+.ws-eol[data-eol="\21B5"]::after {
+  font-weight: 700;
+  -webkit-text-stroke: 0.3px currentColor;
+}
+
+/* Summary */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.summary .chip {
+  color: var(--text);
+  cursor: pointer;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.summary .chip:hover:not(:disabled),
+.summary .chip.active {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+.summary .chip:disabled {
+  cursor: default;
+  opacity: 0.8;
+  /* Blend text/border toward the chip's own background so a disabled chip
+     recedes into the page instead of just looking like a dimmed active one. */
+  color: color-mix(in srgb, var(--text) 25%, var(--panel) 75%);
+  border-color: color-mix(in srgb, var(--border) 35%, var(--panel) 65%);
+}
+
+.summary .chip:disabled strong,
+.summary .chip:disabled .n {
+  color: inherit;
+}
+
+.summary .chip strong {
+  color: var(--text);
+}
+
+.summary .chip .n {
+  font-weight: 700;
+}
+
+.chip.diff .n {
+  color: var(--rep-border);
+}
+.chip.a .n {
+  color: var(--del-border);
+}
+.chip.b .n {
+  color: var(--add-border);
+}
+
+/* Mirrors .file-diff's breakout and .side-by-side-view's 50/50 split so the A:/B: */
+/* labels land directly above each pane's line-number gutter, right-aligned to match. */
+.paths {
+  width: auto;
+  margin-top: 4px;
+  margin-left: -14px;
+  margin-right: -14px;
+  border: 1px solid transparent;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  color: var(--muted);
+  font-size: 13px;
+  font-family: ui-monospace, "Consolas", monospace;
+}
+
+.path-col {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.path-col-b {
+  border-left: 1px solid var(--border);
+}
+
+.path-label {
+  flex: 0 0 48px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  text-align: right;
+}
+
+.path-value {
+  min-width: 0;
+  padding-left: 8px;
+  overflow-wrap: anywhere;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.path-value:hover,
+.path-value:focus-visible {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+/* "(A - B)" suffix appended after every displayed file path. */
+.path-sides {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Narrowed space just inside the "(" and ")", ~2/3 of a normal space. */
+.path-sides-gap {
+  display: inline-block;
+  width: 0.67ch;
+}
+
+/* Category separator glyph, e.g. "≠" / "≈" / "=", between the A/B links. */
+.path-sides-icon {
+  margin: 0 4px;
+  font-weight: 700;
+}
+
+.path-side-link {
+  display: inline-block;
+  font-size: 1.15em;
+  font-weight: 700;
+  /* Disproportionate horizontal-only stretch, distinct from the font-size bump. */
+  transform: scaleX(1.3);
+  transform-origin: center;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.path-side-link.side-a {
+  color: var(--del-border);
+}
+
+.path-side-link.side-b {
+  color: var(--add-border);
+}
+
+.path-side-link:hover,
+.path-side-link:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.path-col .a-label {
+  color: var(--del-border);
+}
+.path-col .b-label {
+  color: var(--add-border);
+}
+
+/* Sections */
+.section {
+  margin: 24px 0;
+}
+
+.section > h2 {
+  font-size: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+}
+
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: 13px;
+}
+
+.file-list li {
+  padding: 3px 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.file-list li .path {
+  color: var(--text);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 10px;
+  margin-left: 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* File diff blocks */
+.file-diff {
+  width: auto;
+  margin-left: -14px;
+  margin-right: -14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+}
+
+.file-diff > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  background: var(--panel-2);
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+}
+
+.file-diff > summary::-webkit-details-marker {
+  display: none;
+}
+
+.file-diff > summary .name {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.file-diff > summary .stat {
+  font-size: 12px;
+}
+.stat.add {
+  color: var(--add-border);
+}
+.stat.del {
+  color: var(--del-border);
+}
+.stat.rep {
+  color: var(--rep-border);
+}
+
+/* Diff tables */
+.diff-table {
+  width: 100%;
+  height: auto;
+  border-collapse: collapse;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  table-layout: auto;
+}
+
+.diff-table.side-by-side {
+  table-layout: fixed;
+}
+
+.diff-table.side-by-side col.line-number {
+  width: 48px;
+}
+
+.diff-table.side-by-side col.line-sign {
+  width: 16px;
+}
+
+.diff-table.side-by-side col.text-column {
+  width: calc(100% - 64px);
+  min-width: 0;
+}
+
+.side-by-side-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.diff-pane {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.diff-pane + .diff-pane {
+  border-left: 1px solid var(--border);
+}
+
+.diff-table td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.diff-table td.num,
+.diff-table td.sign {
+  padding: 0 8px;
+}
+
+.diff-table td.text {
+  overflow: hidden;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.diff-table td.num,
+.diff-table td.sign,
+.diff-table tr.gap td {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.diff-table.unified-diff td.text,
+.diff-table.unified-diff .text-content {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.diff-scroll {
+  width: 100%;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(230, 237, 243, 0.32) transparent;
+}
+
+.diff-scroll:hover {
+  overflow-x: auto;
+}
+
+.diff-scroll .diff-table {
+  width: 100%;
+  min-width: 100%;
+}
+
+.diff-table .text-content {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 1.5em;
+  padding: 0 8px;
+  white-space: pre;
+  overflow: visible;
+  will-change: transform;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.diff-pan-scrolls {
+  width: 100%;
+}
+
+.diff-pan-scrolls.unified {
+  min-height: 8px;
+}
+
+.diff-pan-scrolls.side-by-side {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 64px minmax(0, 1fr);
+}
+
+.diff-pan-scrolls.side-by-side .diff-pan-scroll:nth-child(1) {
+  grid-column: 2;
+}
+
+.diff-pan-scrolls.side-by-side .diff-pan-scroll:nth-child(2) {
+  grid-column: 4;
+}
+
+.diff-pan-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.diff-pan-scroll:hover {
+  overflow-x: auto;
+  scrollbar-color: rgba(230, 237, 243, 0.32) transparent;
+}
+
+.diff-pan-content {
+  height: 8px;
+}
+
+.diff-pan-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.diff-pan-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.diff-pan-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.diff-pan-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(230, 237, 243, 0.48);
+}
+
+.diff-table td.num {
+  width: 48px;
+  min-width: 48px;
+  text-align: right;
+  color: var(--num);
+  background: rgba(255, 255, 255, 0.02);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.diff-table td.sign {
+  width: 16px;
+  min-width: 16px;
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+}
+
+tr.equal td.text {
+  color: var(--text);
+}
+tr.delete td.text,
+tr.replace td.text.left {
+  background: var(--del-bg);
+}
+tr.insert td.text,
+tr.replace td.text.right {
+  background: var(--add-bg);
+}
+
+tr.replace td.text .diff-common {
+  background: inherit;
+}
+
+tr.replace td.text.left .diff-changed {
+  background: rgba(255, 120, 120, 0.4);
+  color: #fff1f1;
+}
+
+tr.replace td.text.right .diff-changed {
+  background: rgba(112, 224, 145, 0.55);
+  color: #effff3;
+}
+
+tr.delete td.sign,
+tr.replace td.sign.left {
+  color: var(--del-border);
+  background: var(--del-bg);
+}
+tr.insert td.sign,
+tr.replace td.sign.right {
+  color: var(--add-border);
+  background: var(--add-bg);
+}
+
+tr.gap td {
+  text-align: center;
+  color: var(--muted);
+  background: var(--gap);
+  padding: 4px;
+  font-size: 11px;
+  user-select: none;
+}
+
+tr.gap-toggle td {
+  cursor: pointer;
+}
+
+/* While drag-selecting, force the text I-beam everywhere (matching native
+   text-selection). Otherwise the cursor flips to a pointer over the gap or the
+   file-diff summary even though a selection is active and clicking is disabled. */
+body.drag-selecting,
+body.drag-selecting * {
+  cursor: text !important;
+}
+
+tr.gap-toggle:hover td {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+/* ...and suppress the hover styling during a drag-select, so a gap only ever
+   changes color when it's actually armed. */
+body.drag-selecting tr.gap-toggle:not(.gap-armed):hover td {
+  color: var(--muted);
+  background: var(--gap);
+}
+
+/* A single, fully opaque "soft blue" used for all three selection indicators
+   below, so the result never varies depending on what's underneath (a truly
+   translucent color would blend differently over each row's own background). */
+
+/* Force native selection to the same solid, subtle color everywhere, instead
+   of blending translucently with each row's own background (add/del tint). */
+.diff-table ::selection {
+  background: var(--selection-tint);
+  color: var(--text);
+}
+
+/* A blank/whitespace-only line has no visible glyph, so native selection
+   highlighting on it is invisible; tint it explicitly while selected. The tint
+   starts at the content-box left edge (past the 8px padding) so it lines up
+   flush with where text — and its native selection — begins on other lines. */
+.text-content.ws-line-selected {
+  background: linear-gradient(to right, transparent 8px, var(--selection-tint) 8px);
+}
+
+/* A collapsed gap the drag came close enough to — its hidden lines will be
+   spliced into the copied text even though they're not individually selectable. */
+tr.gap-toggle.gap-armed td {
+  color: var(--text);
+  background: var(--selection-tint);
+}
+
+td.empty {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}

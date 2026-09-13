@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Socha Diff — non-whitespace differences</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>Socha Diff</h1>
+        <p class="subtitle">Tool for comparing and matching folder contents.</p>
+      </div>
+      <div class="header-actions">
+        <span id="ws-indicator" class="ws-indicator" role="status" aria-describedby="ws-tooltip">
+          <span class="ws-indicator-icon" aria-hidden="true">¶</span>
+          <span class="ws-indicator-label"></span>
+          <span id="ws-tooltip" class="header-tooltip header-tooltip-cursor" role="tooltip">
+            <span class="header-tooltip-text"></span>
+          </span>
+        </span>
+        <button type="button" id="settings-open-btn" class="settings-link" aria-describedby="settings-shortcut-tooltip">
+          Settings
+          <span id="settings-shortcut-tooltip" class="header-tooltip header-tooltip-cursor" role="tooltip">
+            <span class="ws-indicator-icon" aria-hidden="true">⌨</span>
+            <span>Ctrl+S to open Settings</span>
+          </span>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <form id="compare-form" class="panel">
+        <div class="field">
+          <label for="folderA">Folder A</label>
+          <input type="text" id="folderA" name="folderA" placeholder="C:\path\to\folder-a" autocomplete="off" spellcheck="false" required />
+        </div>
+        <div class="field">
+          <label for="folderB">Folder B</label>
+          <input type="text" id="folderB" name="folderB" placeholder="C:\path\to\folder-b" autocomplete="off" spellcheck="false" required />
+        </div>
+        <div class="actions">
+          <span class="compare-button-wrap">
+            <button type="submit" id="compare-btn">Compare</button>
+            <span id="compare-pending-indicator" class="compare-pending-indicator" role="status" tabindex="0" aria-describedby="compare-pending-tooltip" hidden>
+              <span aria-hidden="true">✦</span>
+              <span id="compare-pending-tooltip" class="header-tooltip header-tooltip-cursor header-tooltip-cursor-right" role="tooltip">Settings changed. Run Compare again to apply them.</span>
+            </span>
+          </span>
+          <div class="view-controls">
+            <button type="button" id="whitespace-btn" class="ws-toggle-btn" aria-pressed="false">
+              <span id="whitespace-eye" class="whitespace-eye closed no-transition" aria-hidden="true">&#128065;</span>
+              <span>Whitespace chars</span>
+            </button>
+            <div class="view-toggle" role="group" aria-label="Diff display style">
+              <button type="button" class="toggle-btn active" data-view="side-by-side">Side&#8209;by&#8209;side</button>
+              <button type="button" class="toggle-btn" data-view="unified">Unified</button>
+            </div>
+          </div>
+        </div>
+        <div id="sync-actions" class="sync-actions" hidden></div>
+      </form>
+
+      <section id="results" aria-live="polite"></section>
+    </main>
+
+    <dialog id="settings-dialog" class="settings-dialog">
+      <div class="settings-dialog-header">
+        <h2>Settings</h2>
+        <button type="button" id="settings-close-btn" class="settings-close-btn" aria-label="Close settings">×</button>
+      </div>
+      <div class="settings-content">
+        <label class="settings-checkbox">
+          <input type="checkbox" id="ignore-whitespace" />
+          <span>Ignore whitespace differences</span>
+        </label>
+        <p class="settings-help">When off, differences in spacing, indentation, and line endings are reported as changes.</p>
+        <label for="ignored-directories" class="settings-section-label">Excluded folder names</label>
+        <textarea id="ignored-directories" rows="10" spellcheck="false" aria-describedby="settings-help"></textarea>
+        <p id="settings-help" class="settings-help">Enter one folder name per line. Names are matched case-insensitively.</p>
+        <div class="settings-actions">
+          <button type="button" id="reset-settings-btn" class="secondary-btn">Reset to default</button>
+          <span id="settings-status" class="settings-status" aria-live="polite"></span>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="error-dialog" class="settings-dialog content-changed-dialog">
+      <div class="settings-dialog-header">
+        <h2><span class="content-changed-icon content-changed-error-icon" aria-hidden="true">✖</span> <span id="error-dialog-title"></span></h2>
+      </div>
+      <div class="settings-content">
+        <p id="error-dialog-message" class="settings-help"></p>
+        <div class="settings-actions content-changed-actions">
+          <button type="button" id="error-dialog-ok-btn" class="primary-btn">OK</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="sync-confirm-dialog" class="settings-dialog content-changed-dialog">
+      <div class="settings-dialog-header">
+        <h2><span class="content-changed-icon" aria-hidden="true">⚠</span> Confirm folder mirroring</h2>
+      </div>
+      <div class="settings-content">
+        <p id="sync-confirm-message" class="settings-help"></p>
+        <div class="settings-actions content-changed-actions">
+          <button type="button" id="sync-confirm-cancel-btn" class="secondary-btn">Cancel</button>
+          <button type="button" id="sync-confirm-ok-btn" class="primary-btn">OK</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="info-toast" class="info-toast" role="status" aria-live="polite">
+      <span id="info-toast-spinner" class="info-toast-spinner" aria-hidden="true" hidden></span>
+      <span id="info-toast-message" class="info-toast-message"></span>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
