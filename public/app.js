@@ -265,10 +265,11 @@ let dragAnchorRowIndex = -1;
 // Set only by selectAllInScope; distinguishes a whole-file selection (which
 // may include lines collapsed out of the DOM) from a partial drag selection.
 let wholeFileScope = null;
-// Gap indices (within the current drag's pane) the cursor has hovered
-// directly over (the same area where its cursor becomes a pointer); their
-// hidden lines get spliced into the copied text even though they were never
-// actually rendered/selectable in the DOM.
+// Gap indices (within the current drag's pane) armed by pointer-over-gap
+// proximity (same hit target as click-to-expand / hand cursor), after an
+// adjacent visible text row was already selected. Sticky until next mousedown
+// so Copy still includes them after mouseup. Hidden lines are spliced into
+// the copied text even though they were never rendered/selectable in the DOM.
 let proximityGapIndices = new Set();
 
 function scopeOf(node) {
@@ -469,7 +470,7 @@ function selectedRowRange(rowEls, selection) {
 
 // True for a still-collapsed gap row whose hidden lines should be treated as
 // part of the selection: either the whole pane is selected, or the drag
-// hovered directly over it after reaching the adjacent row (see markGapsNearPoint).
+// armed it via maybeArmGapUnderPointer.
 function isArmedGapRow(tr, treatAllAsArmed) {
   if (!tr.classList.contains("gap-toggle") || tr.dataset.expanded === "true") return false;
   return treatAllAsArmed || proximityGapIndices.has(Number(tr.dataset.gapIndex));
@@ -492,19 +493,28 @@ function clearSelectionVisuals() {
   document.querySelectorAll(".gap-armed").forEach((el) => el.classList.remove("gap-armed"));
 }
 
-// Arm (from scratch, not sticky) every still-collapsed gap whose row lies
-// within the drag span [spanLo, spanHi]. Driven by the drag's anchor/cursor
-// rows rather than the native selection, so a gap the cursor has reached (or
-// passed, e.g. moving up above it into the summary) stays armed until the
-// cursor retreats below it or the selection collapses.
-function armGapsInSpan(rowEls, spanLo, spanHi) {
-  proximityGapIndices = new Set();
-  for (let i = spanLo; i <= spanHi; i++) {
+// Arm a collapsed gap only when the pointer is directly over it (same hit
+// target as click-to-expand / hand cursor) AND an adjacent non-gap row with
+// visible text is already in the selected row range. Sticky: once added to
+// proximityGapIndices, stays until the next mousedown clears the set.
+function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
+  if (!dragSelecting || !selectionScope) return;
+  const el = document.elementFromPoint(dragPointer.x, dragPointer.y);
+  if (!(el instanceof Element) || !selectionScope.contains(el)) return;
+  const gapTr = el.closest("tr.gap-toggle");
+  if (!gapTr || gapTr.dataset.expanded === "true" || !selectionScope.contains(gapTr)) return;
+
+  const gapIdx = rowEls.indexOf(gapTr);
+  if (gapIdx === -1) return;
+
+  const adjacentSelectedText = (i) => {
+    if (i < selectedFirst || i > selectedLast) return false;
     const tr = rowEls[i];
-    if (tr.classList.contains("gap-toggle") && tr.dataset.expanded !== "true") {
-      proximityGapIndices.add(Number(tr.dataset.gapIndex));
-    }
-  }
+    return !!(tr && tr.querySelector(".text-content"));
+  };
+  if (!adjacentSelectedText(gapIdx - 1) && !adjacentSelectedText(gapIdx + 1)) return;
+
+  proximityGapIndices.add(Number(gapTr.dataset.gapIndex));
 }
 
 // The row index nearest the live cursor (dragPointer), clamped into range.
@@ -538,15 +548,14 @@ function updateSelectionVisuals() {
     if (!range) return;
     let [rawFirst, rawLast] = range;
     if (dragSelecting && dragAnchorRowIndex !== -1) {
-      // Clamp the geometry range to the drag's real span (anchor → cursor
-      // rows) and arm gaps by that span. This survives the boundary where the
-      // browser transiently degenerates the native selection (focus leaving
-      // the table into the summary), keeping the nearer gap armed while more
-      // distant text stays selected.
+      // Arm only when the pointer is on a gap with adjacent text already
+      // selected (sticky). Separately clamp visual marking to the drag's real
+      // span (anchor → cursor) so a transient native-selection over-extension
+      // can't highlight rows the drag never reached.
+      maybeArmGapUnderPointer(rowEls, rawFirst, rawLast);
       const cursorRow = cursorRowFromPointer(rowEls);
       const spanLo = Math.min(dragAnchorRowIndex, cursorRow);
       const spanHi = Math.max(dragAnchorRowIndex, cursorRow);
-      armGapsInSpan(rowEls, spanLo, spanHi);
       rawFirst = Math.max(rawFirst, spanLo);
       rawLast = Math.min(rawLast, spanHi);
       if (rawFirst > rawLast) {
@@ -555,8 +564,9 @@ function updateSelectionVisuals() {
       }
       [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, rawFirst, rawLast, false);
     } else {
-      proximityGapIndices = new Set();
-      [firstIdx, lastIdx] = [rawFirst, rawLast];
+      // Do not clear proximityGapIndices here — arming stays sticky until the
+      // next mousedown so Copy still includes armed gaps after mouseup.
+      [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, rawFirst, rawLast, false);
     }
   }
 
@@ -630,8 +640,8 @@ function copyDiffSelection(event, scroll, file) {
   if (!anchorElement.closest(".text-content")) return;
 
   // Within a side-by-side pane, rebuild the copied text row-by-row so any
-  // gap the drag passed near (see markGapsNearPoint) contributes its hidden
-  // lines, instead of being silently skipped like an untouched gap.
+  // gap armed via maybeArmGapUnderPointer contributes its hidden lines,
+  // instead of being silently skipped like an untouched gap.
   if (scope && scroll.contains(scope)) {
     const side = scope.classList.contains("right-pane") ? "right" : "left";
     const rowEls = Array.from(scope.querySelectorAll("tbody > tr"));
