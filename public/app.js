@@ -514,12 +514,25 @@ function selectedRowRange(rowEls, selection) {
   return first === -1 ? null : [first, last];
 }
 
-// True for a still-collapsed gap row whose hidden lines should be treated as
-// part of the selection: either the whole pane is selected, or the drag
-// armed it via maybeArmGapUnderPointer.
+// True for a still-collapsed gap row that was proximity-armed (or every gap
+// when the whole pane is selected). Edge gaps outside the visible text span
+// are only pulled in when this is true; interior gaps use isSpannedGapRow.
 function isArmedGapRow(tr, treatAllAsArmed) {
   if (!tr.classList.contains("gap-toggle") || tr.dataset.expanded === "true") return false;
   return treatAllAsArmed || proximityGapIndices.has(Number(tr.dataset.gapIndex));
+}
+
+// Collapsed gap strictly between the selected text-row bounds — the selection
+// spans it even if the pointer never armed it. Hidden gap.rows must copy.
+function isSpannedGapRow(tr, index, firstIdx, lastIdx) {
+  if (!tr.classList.contains("gap-toggle") || tr.dataset.expanded === "true") return false;
+  return index > firstIdx && index < lastIdx;
+}
+
+// Gap contributes hidden lines on copy / gap-armed visuals when whole-pane,
+// proximity-armed, or spanned by the current row range.
+function isIncludedGapRow(tr, treatAllAsArmed, index, firstIdx, lastIdx) {
+  return isArmedGapRow(tr, treatAllAsArmed) || isSpannedGapRow(tr, index, firstIdx, lastIdx);
 }
 
 // Gap rows are unselectable (see tr.gap td { user-select: none }), so the
@@ -576,9 +589,9 @@ function cursorRowFromPointer(rowEls) {
 }
 
 // Mark blank/whitespace-only lines (and empty insert/delete placeholders) and
-// armed (proximity-touched) gaps within the current selection: native selection
-// highlighting is invisible or caret-width on empty content, and gives no cue
-// that a collapsed gap will be copied too.
+// included gaps (proximity-armed or spanned) within the current selection:
+// native selection highlighting is invisible or caret-width on empty content,
+// and gives no cue that a collapsed gap will be copied too.
 function updateSelectionVisuals() {
   if (!selectionScope) {
     clearSelectionVisuals();
@@ -645,26 +658,69 @@ function updateSelectionVisuals() {
     if (textContent && !lineTextFromContent(textContent).trim()) {
       textContent.classList.add("ws-line-selected");
     }
-    if (isArmedGapRow(tr, wholeFile)) tr.classList.add("gap-armed");
+    if (isIncludedGapRow(tr, wholeFile, i, firstIdx, lastIdx)) tr.classList.add("gap-armed");
   }
 }
 
 document.addEventListener("selectionchange", updateSelectionVisuals);
 
+// Rebuild one side's text from the diff row model, expanding collapsed gaps
+// via gap.rows. Used when assembling multi-row copies that span/arm gaps.
+// Under ignore-whitespace this still omits blank-only insert/delete rows that
+// were filtered out of `rows` before collapse — whole-pane copy prefers
+// fullTextA/B below for that reason.
+function sideTextFromRowModel(file, side) {
+  if (!file || !Array.isArray(file.rows)) return "";
+  const parts = [];
+  for (let index = 0; index < file.rows.length; index++) {
+    const row = file.rows[index];
+    if (row.type === "gap") {
+      const hidden = gapHiddenText(file, index, side);
+      if (hidden) parts.push(hidden);
+      continue;
+    }
+    const text = side === "left" ? row.leftText : row.rightText;
+    if (text === null || text === undefined) continue;
+    const ending = side === "left" ? row.leftEnding : row.rightEnding;
+    parts.push(text + eolString(ending));
+  }
+  return parts.join("");
+}
+
 // Whole-pane copy uses the server-sent original text for that side rather
 // than the diff rows: ignore-whitespace mode drops blank-only insert/delete
 // rows from `rows` entirely, so they can't be recovered by walking rows/gaps.
 function fullSideText(file, side) {
-  return side === "left" ? file.fullTextA : file.fullTextB;
+  const direct = side === "left" ? file.fullTextA : file.fullTextB;
+  if (typeof direct === "string") return direct;
+  return sideTextFromRowModel(file, side);
 }
 
-// True when the selection touches both the pane's first and last row, i.e. a
-// manual drag from top to bottom — even though the collapsed lines in
-// between (in any unexpanded gaps) were never actually in the DOM to select.
+// True when the selection covers the pane's first and last *text* rows, i.e. a
+// manual drag across every visible line. Leading/trailing collapsed gaps are
+// user-select:none, so checking the outer <tr>s would miss a whole-pane drag;
+// first/last .text-content rows are the reliable bounds. Collapsed lines (and
+// ignore-whitespace blanks omitted from `rows`) then come from fullSideText.
 function selectionSpansWholePane(selection, scope) {
-  const rows = scope.querySelectorAll("tr");
-  if (!rows.length) return false;
-  return selection.containsNode(rows[0], true) && selection.containsNode(rows[rows.length - 1], true);
+  const textRows = Array.from(scope.querySelectorAll("tbody > tr")).filter((tr) => tr.querySelector(".text-content"));
+  if (!textRows.length) return false;
+  const firstContent = textRows[0].querySelector(".text-content");
+  const lastContent = textRows[textRows.length - 1].querySelector(".text-content");
+  return selection.containsNode(firstContent, true) && selection.containsNode(lastContent, true);
+}
+
+// Row-range form of whole-pane: every visible .text-content row lies inside
+// [firstIdx, lastIdx]. Used by the copy path so we still take fullSideText
+// (original file text, including ignore-whitespace blanks and end gaps) even
+// if containsNode is inconclusive on a given browser/selection.
+function rowRangeCoversAllTextRows(rowEls, firstIdx, lastIdx) {
+  let sawText = false;
+  for (let i = 0; i < rowEls.length; i++) {
+    if (!rowEls[i].querySelector(".text-content")) continue;
+    sawText = true;
+    if (i < firstIdx || i > lastIdx) return false;
+  }
+  return sawText;
 }
 
 // The literal line terminator for a row's stored "crlf"/"lf"/"" ending.
@@ -708,15 +764,24 @@ function copyDiffSelection(event, scroll, file) {
 
   if (!anchorElement.closest(".text-content")) return;
 
-  // Within a side-by-side pane, rebuild the copied text row-by-row so any
-  // gap armed via maybeArmGapUnderPointer contributes its hidden lines,
-  // instead of being silently skipped like an untouched gap.
+  // Within a side-by-side pane, rebuild from the side/row model: proximity-
+  // armed gaps, gaps the selection spans, and (when every visible text row
+  // is covered) the full original side text — so collapsed / ignore-
+  // whitespace-hidden lines are not dropped just because they are not in
+  // the painted DOM.
   if (scope && scroll.contains(scope)) {
     const side = scope.classList.contains("right-pane") ? "right" : "left";
     const rowEls = Array.from(scope.querySelectorAll("tbody > tr"));
     const range = selectedRowRange(rowEls, selection);
 
     if (range) {
+      if (rowRangeCoversAllTextRows(rowEls, range[0], range[1])) {
+        event.clipboardData.setData("text/plain", fullSideText(file, side));
+        event.preventDefault();
+        return;
+      }
+      // Extend for proximity-armed edge gaps, then include any collapsed gap
+      // the selection spans (interior) or armed — hidden text from gap.rows.
       const [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, range[0], range[1], false);
       const parts = [];
       for (let i = firstIdx; i <= lastIdx; i++) {
@@ -725,7 +790,7 @@ function copyDiffSelection(event, scroll, file) {
         const textContent = tr.querySelector(".text-content");
         if (textContent) {
           parts.push(lineTextFromContent(textContent) + eolString(tr.dataset.ending));
-        } else if (isArmedGapRow(tr, false)) {
+        } else if (isIncludedGapRow(tr, false, i, firstIdx, lastIdx)) {
           const hidden = gapHiddenText(file, Number(tr.dataset.gapIndex), side);
           if (hidden) parts.push(hidden);
         }
