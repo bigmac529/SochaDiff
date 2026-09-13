@@ -1301,12 +1301,28 @@ body.drag-selecting tr.gap-toggle:not(.gap-armed):hover td {
   color: var(--text);
 }
 
-/* A blank/whitespace-only line has no visible glyph, so native selection
-   highlighting on it is invisible; tint it explicitly while selected. The tint
-   starts at the content-box left edge (past the 8px padding) so it lines up
-   flush with where text — and its native selection — begins on other lines. */
+/* Invisible width-bearing pad so empty/blank .text-content has a real
+   selection target (Chromium otherwise yields no client rects / a 1px streak).
+   Copied text strips it via dataset.selPad. */
+.text-content > .sel-pad {
+  color: transparent;
+}
+
+/* A blank/whitespace-only line (or empty insert/delete placeholder) has no
+   visible glyph, so native selection highlighting on it is invisible or only a
+   caret-width streak; tint it explicitly while selected. The tint starts at
+   the content-box left edge (past the 8px padding) so it lines up flush with
+   where text — and its native selection — begins on other lines. */
 .text-content.ws-line-selected {
   background: linear-gradient(to right, transparent 8px, var(--selection-tint) 8px);
+}
+
+/* Suppress the caret-width native streak on padded blank/empty rows; the
+   gradient above is the contiguous selection paint. */
+.diff-table .text-content.ws-line-selected::selection,
+.diff-table .text-content.ws-line-selected *::selection {
+  background: transparent;
+  color: inherit;
 }
 
 /* A collapsed gap the drag came close enough to — its hidden lines will be

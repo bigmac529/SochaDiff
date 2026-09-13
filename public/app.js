@@ -227,6 +227,24 @@ function characterSegments(left, right) {
   return { left: toSegments(left, leftCommon), right: toSegments(right, rightCommon) };
 }
 
+// Blank / placeholder .text-content has no selectable glyph, so Chromium
+// reports no getClientRects (flashing marks) and paints at most a caret-width
+// streak. Seed an invisible NBSP pad so drag geometry stays contiguous; copy
+// reads lineTextFromContent which strips the pad via dataset.selPad.
+function ensureSelectionPad(content) {
+  if (content.textContent.length > 0) return;
+  const pad = el("span", "sel-pad");
+  pad.textContent = "\u00a0";
+  content.appendChild(pad);
+  content.dataset.selPad = "1";
+}
+
+function lineTextFromContent(textContent) {
+  if (!textContent) return "";
+  if (textContent.dataset.selPad === "1") return "";
+  return textContent.textContent;
+}
+
 function textTd(className, text, ending, segments) {
   const cell = td(className);
   const content = el("div", "text-content");
@@ -248,6 +266,7 @@ function textTd(className, text, ending, segments) {
   } else {
     content.textContent = raw;
   }
+  ensureSelectionPad(content);
   cell.appendChild(content);
   return cell;
 }
@@ -445,30 +464,51 @@ document.addEventListener("selectionchange", () => {
   constrainingSelection = false;
 });
 
+// Row index for a selection anchor/focus node within rowEls, or -1.
+function rowIndexForNode(node, rowEls) {
+  const element = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
+  if (!element) return -1;
+  const tr = element.closest("tr");
+  return tr ? rowEls.indexOf(tr) : -1;
+}
+
 // The [firstVisibleRow, lastVisibleRow] the selection spans, derived from its
 // rendered rects rather than anchor/focus nodes: when a drag ends inside an
 // unselectable gap the focus can land on the pane element itself (not a row),
 // which node-based lookup can't resolve. Gap rows have no .text-content and are
 // skipped, so the bounds are always visible text rows.
+// Empty .text-content can yield zero-width or empty client rects in Chromium;
+// accept height-only rects and fall back to anchor/focus rows when needed.
 function selectedRowRange(rowEls, selection) {
   if (!selection.rangeCount) return null;
-  const rects = Array.from(selection.getRangeAt(0).getClientRects()).filter((r) => r.width > 0 && r.height > 0);
-  if (!rects.length) return null;
-  let top = Infinity;
-  let bottom = -Infinity;
-  for (const r of rects) {
-    top = Math.min(top, r.top);
-    bottom = Math.max(bottom, r.bottom);
-  }
+  const rects = Array.from(selection.getRangeAt(0).getClientRects()).filter((r) => r.height > 0);
   let first = -1;
   let last = -1;
-  for (let i = 0; i < rowEls.length; i++) {
-    if (!rowEls[i].querySelector(".text-content")) continue; // skip gap rows
-    const b = rowEls[i].getBoundingClientRect();
-    const cy = (b.top + b.bottom) / 2;
-    if (cy >= top - 1 && cy <= bottom + 1) {
-      if (first === -1) first = i;
-      last = i;
+  if (rects.length) {
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (const r of rects) {
+      top = Math.min(top, r.top);
+      bottom = Math.max(bottom, r.bottom);
+    }
+    for (let i = 0; i < rowEls.length; i++) {
+      if (!rowEls[i].querySelector(".text-content")) continue; // skip gap rows
+      const b = rowEls[i].getBoundingClientRect();
+      const cy = (b.top + b.bottom) / 2;
+      if (cy >= top - 1 && cy <= bottom + 1) {
+        if (first === -1) first = i;
+        last = i;
+      }
+    }
+  }
+  if (first === -1) {
+    const anchorIdx = rowIndexForNode(selection.anchorNode, rowEls);
+    const focusIdx = rowIndexForNode(selection.focusNode, rowEls);
+    if (anchorIdx !== -1 && focusIdx !== -1) {
+      first = Math.min(anchorIdx, focusIdx);
+      last = Math.max(anchorIdx, focusIdx);
+    } else if (anchorIdx !== -1 || focusIdx !== -1) {
+      first = last = anchorIdx !== -1 ? anchorIdx : focusIdx;
     }
   }
   return first === -1 ? null : [first, last];
@@ -535,23 +575,42 @@ function cursorRowFromPointer(rowEls) {
   return y < rowEls[0].getBoundingClientRect().top ? 0 : rowEls.length - 1;
 }
 
-// Mark blank/whitespace-only lines and armed (proximity-touched) gaps within
-// the current selection: native selection highlighting is invisible on empty
-// content, and gives no cue that a collapsed gap will be copied too.
+// Mark blank/whitespace-only lines (and empty insert/delete placeholders) and
+// armed (proximity-touched) gaps within the current selection: native selection
+// highlighting is invisible or caret-width on empty content, and gives no cue
+// that a collapsed gap will be copied too.
 function updateSelectionVisuals() {
-  clearSelectionVisuals();
-  if (!selectionScope) return;
+  if (!selectionScope) {
+    clearSelectionVisuals();
+    return;
+  }
   const selection = window.getSelection();
-  if (!selection || !selection.rangeCount || selection.isCollapsed) return;
-  if (scopeOf(selection.anchorNode) !== selectionScope) return;
+  if (!selection || !selection.rangeCount || selection.isCollapsed) {
+    clearSelectionVisuals();
+    return;
+  }
+  if (scopeOf(selection.anchorNode) !== selectionScope) {
+    clearSelectionVisuals();
+    return;
+  }
 
   const rowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
   const wholeFile = wholeFileScope === selectionScope;
   let firstIdx = 0;
   let lastIdx = rowEls.length - 1;
   if (!wholeFile) {
-    const range = selectedRowRange(rowEls, selection);
-    if (!range) return;
+    let range = selectedRowRange(rowEls, selection);
+    // While dragging across blank/empty rows Chromium may briefly report no
+    // client rects; keep marks stable via the anchor→cursor span instead of
+    // clearing (which flashed the 1px native streak).
+    if (!range && dragSelecting && dragAnchorRowIndex !== -1 && rowEls.length) {
+      const cursorRow = cursorRowFromPointer(rowEls);
+      range = [Math.min(dragAnchorRowIndex, cursorRow), Math.max(dragAnchorRowIndex, cursorRow)];
+    }
+    if (!range) {
+      clearSelectionVisuals();
+      return;
+    }
     let [rawFirst, rawLast] = range;
     if (dragSelecting && dragAnchorRowIndex !== -1) {
       // Arm only when the pointer is on a gap with adjacent text already
@@ -565,6 +624,7 @@ function updateSelectionVisuals() {
       rawFirst = Math.max(rawFirst, spanLo);
       rawLast = Math.min(rawLast, spanHi);
       if (rawFirst > rawLast) {
+        clearSelectionVisuals();
         rowEls.forEach((tr) => { if (isArmedGapRow(tr, false)) tr.classList.add("gap-armed"); });
         return;
       }
@@ -576,10 +636,13 @@ function updateSelectionVisuals() {
     }
   }
 
+  clearSelectionVisuals();
   for (let i = firstIdx; i <= lastIdx; i++) {
     const tr = rowEls[i];
     const textContent = tr.querySelector(".text-content");
-    if (textContent && !textContent.closest("td").classList.contains("empty") && !textContent.textContent.trim()) {
+    // Include empty placeholders (insert/delete other-side) so the tint stays
+    // contiguous; lineTextFromContent ignores the NBSP selection pad.
+    if (textContent && !lineTextFromContent(textContent).trim()) {
       textContent.classList.add("ws-line-selected");
     }
     if (isArmedGapRow(tr, wholeFile)) tr.classList.add("gap-armed");
@@ -661,7 +724,7 @@ function copyDiffSelection(event, scroll, file) {
         if (tr.dataset.hasText === "false") continue; // no line exists on this side; contributes nothing
         const textContent = tr.querySelector(".text-content");
         if (textContent) {
-          parts.push(textContent.textContent + eolString(tr.dataset.ending));
+          parts.push(lineTextFromContent(textContent) + eolString(tr.dataset.ending));
         } else if (isArmedGapRow(tr, false)) {
           const hidden = gapHiddenText(file, Number(tr.dataset.gapIndex), side);
           if (hidden) parts.push(hidden);
@@ -676,8 +739,8 @@ function copyDiffSelection(event, scroll, file) {
   const selectedRows = Array.from(scroll.querySelectorAll(".text-content"))
     .filter((textContent) => selection.containsNode(textContent, true));
   const copiedText = selectedRows.length > 1
-    ? selectedRows.map((textContent) => textContent.textContent).join("\n")
-    : selection.toString();
+    ? selectedRows.map((textContent) => lineTextFromContent(textContent)).join("\n")
+    : (selectedRows.length === 1 ? lineTextFromContent(selectedRows[0]) : selection.toString());
   event.clipboardData.setData("text/plain", copiedText);
   event.preventDefault();
 }
