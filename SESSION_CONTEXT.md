@@ -1,4 +1,4 @@
-# Session Context — Folder Diff app
+# Session Context — Socha Diff app
 
 Handoff notes for continuing development in another IDE. Everything below reflects
 the current, working state of the project.
@@ -72,8 +72,8 @@ socha-diff/
     app.js             Fetch/render logic, filtering, views, selection, settings, and session restore
   sample/
     folder-a/, folder-b/   Demo fixtures covering the comparison categories (see §8)
-  .folder-diff-state.json     Git-ignored last successful paths, created at runtime
-  .folder-diff-settings.json  Git-ignored persisted settings, created at runtime
+  .socha-diff-state.json     Git-ignored last successful paths, created at runtime
+  .socha-diff-settings.json  Git-ignored persisted settings, created at runtime
   .gitignore             Runtime state, dependencies, and npm logs excluded from Git
   package.json           Dependencies and `npm start` script
   README.md            User-facing docs
@@ -215,7 +215,7 @@ slice, then expanded after each behavior was manually checked:
   categorized result sections, side-by-side and unified renderers, safe
   `textContent` rendering, deep-link parameters, and sample fixtures for manual checks.
 5. **Make comparison policy configurable.** Add runtime settings for ignored directory
-  names and whitespace sensitivity, persist them in `.folder-diff-settings.json`, and
+  names and whitespace sensitivity, persist them in `.socha-diff-settings.json`, and
   expose load/save/reset endpoints. This also required explicit line-ending tracking
   so CRLF/LF changes appear when whitespace ignoring is disabled.
 6. **Add safe synchronization.** Replace whole-folder mirroring with comparison-scoped
@@ -257,8 +257,8 @@ slice, then expanded after each behavior was manually checked:
 - `public/settings.html` and `public/settings.js` were **created then removed** —
   Settings is now an in-page modal (`<dialog>`) on `index.html`. Do not recreate them.
 - Local, git-ignored state files (added to `.gitignore`):
-  - `.folder-diff-state.json` — last successful comparison paths `{ folderA, folderB }`.
-  - `.folder-diff-settings.json` — `{ ignoredDirectories: string[], ignoreWhitespace: boolean }`.
+  - `.socha-diff-state.json` — last successful comparison paths `{ folderA, folderB }`.
+  - `.socha-diff-settings.json` — `{ ignoredDirectories: string[], ignoreWhitespace: boolean }`.
 - `.vscode/settings.json` — sets `"cSpell.enabled": false` (disabled the Code Spell Checker for this workspace).
 
 ## 11.2 Server (`server.js`) — endpoints now
@@ -391,7 +391,7 @@ slice, then expanded after each behavior was manually checked:
 - Per-file resize listeners are tracked in `resizeHandlers` and removed at the start of every
   `renderResults()` (via `clearResizeHandlers()`); rebuilding a file's body swaps its handler.
 - **Session persistence** of results across navigation uses `sessionStorage`
-  (`SESSION_KEY="folderDiffSession"`, `saveSession`/`restoreSession`, called from
+  (`SESSION_KEY="sochaDiffSession"`, `saveSession`/`restoreSession`, called from
   `renderResults` / init). It **skips large results** (`isResultTooLargeToPersist`:
   files > 150 or rows > 20000) to avoid memory/quota blowups.
 
@@ -439,9 +439,9 @@ explicitly changes them.
   authoritative content comparison, including spaces, tabs, blank lines, and CRLF/LF.
   When enabled, unmatched whitespace-only line rows are also removed from the display;
   genuine content changes remain visible. When disabled, whitespace differences show.
-- Settings are auto-saved to `.folder-diff-settings.json`; excluded directories are
+- Settings are auto-saved to `.socha-diff-settings.json`; excluded directories are
   normalized, deduplicated, case-insensitive directory names. Last paths use the
-  separate `.folder-diff-state.json` file.
+  separate `.socha-diff-state.json` file.
 - The header awareness indicator and Settings modal checkbox must always represent the
   same `ignoreWhitespace` value. The server-side settings file is authoritative after
   load; session restoration must not race or overwrite that value.

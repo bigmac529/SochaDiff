@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { execFile } = require("child_process");
 const express = require("express");
 const {
   compareFolders,
@@ -16,8 +17,24 @@ const {
 } = require("./lib/compare");
 
 const app = express();
-const STATE_FILE = path.join(__dirname, ".folder-diff-state.json");
-const SETTINGS_FILE = path.join(__dirname, ".folder-diff-settings.json");
+const STATE_FILE = path.join(__dirname, ".socha-diff-state.json");
+const SETTINGS_FILE = path.join(__dirname, ".socha-diff-settings.json");
+
+// Resolve relPath against folder, rejecting traversal outside it, and confirm
+// the result is an accessible file. Shared by the open-file endpoints below.
+function resolveFileTarget(folder, relPath) {
+  const resolvedFolder = path.resolve(folder);
+  const target = path.resolve(resolvedFolder, relPath);
+  if (target !== resolvedFolder && !target.startsWith(resolvedFolder + path.sep)) {
+    return { error: "Invalid file path." };
+  }
+  try {
+    if (!fs.statSync(target).isFile()) return { error: "The path is not a file." };
+  } catch {
+    return { error: "The file does not exist or is not accessible." };
+  }
+  return { target };
+}
 
 function applyDefaultSettings() {
   setIgnoredDirectories(DEFAULT_IGNORED_DIRECTORIES);
@@ -82,6 +99,61 @@ app.get("/api/last-comparison", (_req, res) => {
 
 app.get("/api/settings", (_req, res) => {
   res.json(currentSettings());
+});
+
+app.get("/api/open-folder", (req, res) => {
+  const folder = typeof req.query.path === "string" ? req.query.path.trim() : "";
+  if (!folder) return res.status(400).json({ error: "Please provide a folder path." });
+  if (process.platform !== "win32") {
+    return res.status(400).json({ error: "Opening folders in Windows Explorer is only supported on Windows." });
+  }
+
+  try {
+    if (!fs.statSync(folder).isDirectory()) {
+      return res.status(400).json({ error: "The path is not a directory." });
+    }
+  } catch {
+    return res.status(400).json({ error: "The folder does not exist or is not accessible." });
+  }
+
+  // explorer.exe routinely exits with a non-zero code even when it opens the
+  // folder successfully, so its exit status isn't a reliable error signal.
+  execFile("explorer.exe", [folder]);
+  res.json({ ok: true });
+});
+
+app.get("/api/open-file", (req, res) => {
+  const folder = typeof req.query.folder === "string" ? req.query.folder.trim() : "";
+  const relPath = typeof req.query.relPath === "string" ? req.query.relPath.trim() : "";
+  if (!folder || !relPath) return res.status(400).json({ error: "Please provide a folder and file path." });
+  if (process.platform !== "win32") {
+    return res.status(400).json({ error: "Opening files is only supported on Windows." });
+  }
+
+  const resolved = resolveFileTarget(folder, relPath);
+  if (resolved.error) return res.status(400).json({ error: resolved.error });
+
+  // cmd's `start` launches a file with its Windows-assigned default app, same
+  // as double-clicking it in Explorer. The empty "" is the required window-title
+  // placeholder so `start` doesn't mistake a quoted path for the title.
+  execFile("cmd.exe", ["/c", "start", "", resolved.target]);
+  res.json({ ok: true });
+});
+
+app.get("/api/open-file-with", (req, res) => {
+  const folder = typeof req.query.folder === "string" ? req.query.folder.trim() : "";
+  const relPath = typeof req.query.relPath === "string" ? req.query.relPath.trim() : "";
+  if (!folder || !relPath) return res.status(400).json({ error: "Please provide a folder and file path." });
+  if (process.platform !== "win32") {
+    return res.status(400).json({ error: "Opening files is only supported on Windows." });
+  }
+
+  const resolved = resolveFileTarget(folder, relPath);
+  if (resolved.error) return res.status(400).json({ error: resolved.error });
+
+  // shell32's OpenAs_RunDLL entry point shows the native "Open With" picker.
+  execFile("rundll32.exe", ["shell32.dll,OpenAs_RunDLL", resolved.target]);
+  res.json({ ok: true });
 });
 
 app.post("/api/settings", (req, res) => {
@@ -190,5 +262,5 @@ const HOST = "127.0.0.1";
 app.listen(PORT, HOST, () => {
   // Bound to localhost only: the app reads arbitrary local paths, so it must
   // not be exposed to the network.
-  console.log(`Folder Diff app running at http://${HOST}:${PORT}`);
+  console.log(`Socha Diff app running at http://${HOST}:${PORT}`);
 });

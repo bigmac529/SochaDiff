@@ -1,10 +1,11 @@
 {
-  "name": "folder-diff-app",
+  "name": "socha-diff-app",
   "version": "1.0.0",
-  "description": "Web app that shows all non-whitespace differences between two folders.",
+  "description": "Folder difference and mirroring tool.",
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
+    "prestart": "node scripts/free-port.js",
     "start": "node server.js"
   },
   "dependencies": {

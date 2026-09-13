@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Folder Diff — non-whitespace differences</title>
+    <title>Socha Diff — non-whitespace differences</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="app-header">
       <div>
-        <h1>Folder Diff</h1>
-        <p class="subtitle">Shows differences between two folders. Toggle the ignoring of whitespace in Settings.</p>
+        <h1>Socha Diff</h1>
+        <p class="subtitle">Tool for comparing and matching folder contents.</p>
       </div>
       <div class="header-actions">
         <span id="ws-indicator" class="ws-indicator" role="status" aria-describedby="ws-tooltip">
@@ -62,7 +62,6 @@
         <div id="sync-actions" class="sync-actions" hidden></div>
       </form>
 
-      <div id="status" class="status" hidden></div>
       <section id="results" aria-live="polite"></section>
     </main>
 
@@ -87,16 +86,14 @@
       </div>
     </dialog>
 
-    <dialog id="content-changed-dialog" class="settings-dialog content-changed-dialog">
+    <dialog id="error-dialog" class="settings-dialog content-changed-dialog">
       <div class="settings-dialog-header">
-        <h2><span class="content-changed-icon content-changed-error-icon" aria-hidden="true">✖</span> Folder contents changed</h2>
+        <h2><span class="content-changed-icon content-changed-error-icon" aria-hidden="true">✖</span> <span id="error-dialog-title"></span></h2>
       </div>
       <div class="settings-content">
-        <p id="content-changed-message" class="settings-help">
-          The folder contents changed after the last comparison. Match was aborted. Run Compare again before mirroring.
-        </p>
+        <p id="error-dialog-message" class="settings-help"></p>
         <div class="settings-actions content-changed-actions">
-          <button type="button" id="content-changed-ok-btn" class="primary-btn">OK</button>
+          <button type="button" id="error-dialog-ok-btn" class="primary-btn">OK</button>
         </div>
       </div>
     </dialog>
@@ -113,6 +110,11 @@
         </div>
       </div>
     </dialog>
+
+    <div id="info-toast" class="info-toast" role="status" aria-live="polite">
+      <span id="info-toast-spinner" class="info-toast-spinner" aria-hidden="true" hidden></span>
+      <span id="info-toast-message" class="info-toast-message"></span>
+    </div>
 
     <script src="app.js"></script>
   </body>

@@ -1,4 +1,4 @@
-# Folder Diff
+# Socha Diff
 
 A small web app that shows **every non-whitespace difference between two folders**.
 Whitespace-only changes — indentation, spacing, blank lines, and line endings
@@ -40,7 +40,7 @@ spacing are treated as unchanged.
 ## Install & run
 
 ```sh
-cd folder-diff-app
+cd socha-diff-app
 npm install
 npm start
 ```
@@ -52,7 +52,7 @@ in, so it is intentionally not exposed to the network. Set the `PORT`
 environment variable to use a different port.
 
 The last successful comparison paths are stored locally in
-`.folder-diff-state.json` beside `server.js`. The file is ignored by Git and
+`.socha-diff-state.json` beside `server.js`. The file is ignored by Git and
 is not served publicly.
 
 ## Try the included sample
@@ -77,7 +77,7 @@ You can prefill and auto-run a comparison via query parameters:
 ## Project layout
 
 ```
-folder-diff-app/
+socha-diff-app/
   server.js          Express server + /api/compare endpoint
   lib/compare.js     Folder walk + whitespace-insensitive diff logic
   public/

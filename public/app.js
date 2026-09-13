@@ -1,7 +1,6 @@
 "use strict";
 
 const form = document.getElementById("compare-form");
-const statusEl = document.getElementById("status");
 const resultsEl = document.getElementById("results");
 const compareBtn = document.getElementById("compare-btn");
 const comparePendingIndicator = document.getElementById("compare-pending-indicator");
@@ -37,6 +36,85 @@ function td(className, text) {
   // textContent keeps file contents inert (no HTML injection).
   cell.textContent = text === null || text === undefined ? "" : text;
   return cell;
+}
+
+async function fetchAndReportError(href) {
+  try {
+    const response = await fetch(href);
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || `Request failed (${response.status})`);
+    }
+  } catch (error) {
+    showErrorModal("Could not open the path", error.message);
+  }
+}
+
+function attachExplorerOpener(link) {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    fetchAndReportError(link.href);
+  });
+  return link;
+}
+
+function folderLink(folderPath) {
+  const link = el("a", "path-value", folderPath);
+  link.href = `/api/open-folder?path=${encodeURIComponent(folderPath)}`;
+  link.title = "Open folder in Windows Explorer";
+  return attachExplorerOpener(link);
+}
+
+// A single clickable "A" or "B" letter that opens that side's copy of a
+// relative file path with its default app; right-click shows the Windows
+// "Open With" picker instead.
+function fileSideLink(letter, folder, relPath) {
+  const link = el("a", `path-side-link ${letter === "A" ? "side-a" : "side-b"}`, letter);
+  link.href = `/api/open-file?folder=${encodeURIComponent(folder)}&relPath=${encodeURIComponent(relPath)}`;
+  link.title = `Open Folder ${letter}'s copy with its default app (right-click for 'Open with')`;
+  attachExplorerOpener(link);
+  link.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    fetchAndReportError(`/api/open-file-with?folder=${encodeURIComponent(folder)}&relPath=${encodeURIComponent(relPath)}`);
+  });
+  return link;
+}
+
+// Separator glyph shown between the A/B links, per result category.
+const SIDE_ICON_BY_KIND = {
+  diff: "\u2260", // ≠ differing
+  bin: "\u2260", // ≠ differing (binary)
+  ws: "\u2248", // ≈ partial equality — whitespace-only
+  same: "=", // = equal — identical
+};
+
+// Narrowed space used just inside the "(" and ")" of the sides suffix.
+function sidesGap() {
+  return el("span", "path-sides-gap", " ");
+}
+
+// The "( A ≠ B )" suffix appended after every displayed file path. "a"/"b"
+// kinds (only-in-A / only-in-B) show just the existing side, with no separator.
+function fileSidesSuffix(relPath, kind) {
+  const span = el("span", "path-sides");
+  if (kind === "a") {
+    span.append(" (", sidesGap(), fileSideLink("A", lastResult.folderA, relPath), sidesGap(), ")");
+  } else if (kind === "b") {
+    span.append(" (", sidesGap(), fileSideLink("B", lastResult.folderB, relPath), sidesGap(), ")");
+  } else {
+    const icon = SIDE_ICON_BY_KIND[kind];
+    const separator = icon ? el("span", "path-sides-icon", icon) : " - ";
+    span.append(
+      " (",
+      sidesGap(),
+      fileSideLink("A", lastResult.folderA, relPath),
+      separator,
+      fileSideLink("B", lastResult.folderB, relPath),
+      sidesGap(),
+      ")"
+    );
+  }
+  return span;
 }
 
 // Map a control character to its Unicode "control picture" glyph.
@@ -180,6 +258,18 @@ let dragSelecting = false;
 let dragPanScroll = null;
 let dragRaf = 0;
 const dragPointer = { x: 0, y: 0 };
+// Row index (within the drag's pane) where the current drag started; used to
+// clamp visual marking to the actual drag span, so a transient native-selection
+// over-extension can't briefly highlight rows the drag never reached.
+let dragAnchorRowIndex = -1;
+// Set only by selectAllInScope; distinguishes a whole-file selection (which
+// may include lines collapsed out of the DOM) from a partial drag selection.
+let wholeFileScope = null;
+// Gap indices (within the current drag's pane) the cursor has hovered
+// directly over (the same area where its cursor becomes a pointer); their
+// hidden lines get spliced into the copied text even though they were never
+// actually rendered/selectable in the DOM.
+let proximityGapIndices = new Set();
 
 function scopeOf(node) {
   const element = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
@@ -196,6 +286,7 @@ function selectAllInScope(scope) {
   selection.addRange(range);
   constrainingSelection = false;
   selectionScope = scope;
+  wholeFileScope = scope;
 }
 
 document.addEventListener("keydown", (event) => {
@@ -274,10 +365,17 @@ function autoScrollStep() {
 
 document.addEventListener("mousedown", (event) => {
   selectionScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
+  wholeFileScope = null;
+  proximityGapIndices = new Set();
+  dragAnchorRowIndex = -1;
+  clearSelectionVisuals();
   if (selectionScope && event.button === 0) {
+    const anchorTr = event.target instanceof Element ? event.target.closest("tr") : null;
+    dragAnchorRowIndex = anchorTr ? Array.from(selectionScope.querySelectorAll("tbody > tr")).indexOf(anchorTr) : -1;
     dragPanScroll = panScrollForScope(selectionScope);
     if (dragPanScroll) {
       dragSelecting = true;
+      document.body.classList.add("drag-selecting");
       dragPointer.x = event.clientX;
       dragPointer.y = event.clientY;
       if (!dragRaf) dragRaf = requestAnimationFrame(autoScrollStep);
@@ -289,10 +387,22 @@ document.addEventListener("mousemove", (event) => {
   if (!dragSelecting) return;
   dragPointer.x = event.clientX;
   dragPointer.y = event.clientY;
+  // Arming happens in updateSelectionVisuals (fires again on the resulting
+  // selectionchange with a fresh selection); calling it here too keeps the
+  // dragPointer-driven hover check responsive.
+  updateSelectionVisuals();
+});
+
+// Right-clicking a side-by-side pane selects that whole file (A or B) so the
+// browser's native context menu offers Copy for the entire text.
+document.addEventListener("contextmenu", (event) => {
+  const scope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
+  if (scope) selectAllInScope(scope);
 });
 
 document.addEventListener("mouseup", () => {
   dragSelecting = false;
+  document.body.classList.remove("drag-selecting");
   dragPanScroll = null;
   if (dragRaf) {
     cancelAnimationFrame(dragRaf);
@@ -328,11 +438,224 @@ document.addEventListener("selectionchange", () => {
   constrainingSelection = false;
 });
 
-function copyDiffSelection(event, scroll) {
+// The [firstVisibleRow, lastVisibleRow] the selection spans, derived from its
+// rendered rects rather than anchor/focus nodes: when a drag ends inside an
+// unselectable gap the focus can land on the pane element itself (not a row),
+// which node-based lookup can't resolve. Gap rows have no .text-content and are
+// skipped, so the bounds are always visible text rows.
+function selectedRowRange(rowEls, selection) {
+  if (!selection.rangeCount) return null;
+  const rects = Array.from(selection.getRangeAt(0).getClientRects()).filter((r) => r.width > 0 && r.height > 0);
+  if (!rects.length) return null;
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const r of rects) {
+    top = Math.min(top, r.top);
+    bottom = Math.max(bottom, r.bottom);
+  }
+  let first = -1;
+  let last = -1;
+  for (let i = 0; i < rowEls.length; i++) {
+    if (!rowEls[i].querySelector(".text-content")) continue; // skip gap rows
+    const b = rowEls[i].getBoundingClientRect();
+    const cy = (b.top + b.bottom) / 2;
+    if (cy >= top - 1 && cy <= bottom + 1) {
+      if (first === -1) first = i;
+      last = i;
+    }
+  }
+  return first === -1 ? null : [first, last];
+}
+
+// True for a still-collapsed gap row whose hidden lines should be treated as
+// part of the selection: either the whole pane is selected, or the drag
+// hovered directly over it after reaching the adjacent row (see markGapsNearPoint).
+function isArmedGapRow(tr, treatAllAsArmed) {
+  if (!tr.classList.contains("gap-toggle") || tr.dataset.expanded === "true") return false;
+  return treatAllAsArmed || proximityGapIndices.has(Number(tr.dataset.gapIndex));
+}
+
+// Gap rows are unselectable (see tr.gap td { user-select: none }), so the
+// browser's anchor/focus can never land inside one — a leading or trailing
+// armed gap sits just outside [firstIdx, lastIdx] and must be pulled in here.
+function extendRangeAcrossArmedGaps(rowEls, firstIdx, lastIdx, treatAllAsArmed) {
+  let first = firstIdx;
+  let last = lastIdx;
+  while (first > 0 && isArmedGapRow(rowEls[first - 1], treatAllAsArmed)) first--;
+  while (last < rowEls.length - 1 && isArmedGapRow(rowEls[last + 1], treatAllAsArmed)) last++;
+  return [first, last];
+}
+
+// Clear the "blank line selected" / "gap will be included" indicators.
+function clearSelectionVisuals() {
+  document.querySelectorAll(".ws-line-selected").forEach((el) => el.classList.remove("ws-line-selected"));
+  document.querySelectorAll(".gap-armed").forEach((el) => el.classList.remove("gap-armed"));
+}
+
+// Arm (from scratch, not sticky) every still-collapsed gap whose row lies
+// within the drag span [spanLo, spanHi]. Driven by the drag's anchor/cursor
+// rows rather than the native selection, so a gap the cursor has reached (or
+// passed, e.g. moving up above it into the summary) stays armed until the
+// cursor retreats below it or the selection collapses.
+function armGapsInSpan(rowEls, spanLo, spanHi) {
+  proximityGapIndices = new Set();
+  for (let i = spanLo; i <= spanHi; i++) {
+    const tr = rowEls[i];
+    if (tr.classList.contains("gap-toggle") && tr.dataset.expanded !== "true") {
+      proximityGapIndices.add(Number(tr.dataset.gapIndex));
+    }
+  }
+}
+
+// The row index nearest the live cursor (dragPointer), clamped into range.
+// Used to bound the marked span; robust to the cursor being above the first
+// row (e.g. over the file-diff summary) or below the last.
+function cursorRowFromPointer(rowEls) {
+  const y = dragPointer.y;
+  for (let i = 0; i < rowEls.length; i++) {
+    const b = rowEls[i].getBoundingClientRect();
+    if (y >= b.top && y <= b.bottom) return i;
+  }
+  return y < rowEls[0].getBoundingClientRect().top ? 0 : rowEls.length - 1;
+}
+
+// Mark blank/whitespace-only lines and armed (proximity-touched) gaps within
+// the current selection: native selection highlighting is invisible on empty
+// content, and gives no cue that a collapsed gap will be copied too.
+function updateSelectionVisuals() {
+  clearSelectionVisuals();
+  if (!selectionScope) return;
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount || selection.isCollapsed) return;
+  if (scopeOf(selection.anchorNode) !== selectionScope) return;
+
+  const rowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
+  const wholeFile = wholeFileScope === selectionScope;
+  let firstIdx = 0;
+  let lastIdx = rowEls.length - 1;
+  if (!wholeFile) {
+    const range = selectedRowRange(rowEls, selection);
+    if (!range) return;
+    let [rawFirst, rawLast] = range;
+    if (dragSelecting && dragAnchorRowIndex !== -1) {
+      // Clamp the geometry range to the drag's real span (anchor → cursor
+      // rows) and arm gaps by that span. This survives the boundary where the
+      // browser transiently degenerates the native selection (focus leaving
+      // the table into the summary), keeping the nearer gap armed while more
+      // distant text stays selected.
+      const cursorRow = cursorRowFromPointer(rowEls);
+      const spanLo = Math.min(dragAnchorRowIndex, cursorRow);
+      const spanHi = Math.max(dragAnchorRowIndex, cursorRow);
+      armGapsInSpan(rowEls, spanLo, spanHi);
+      rawFirst = Math.max(rawFirst, spanLo);
+      rawLast = Math.min(rawLast, spanHi);
+      if (rawFirst > rawLast) {
+        rowEls.forEach((tr) => { if (isArmedGapRow(tr, false)) tr.classList.add("gap-armed"); });
+        return;
+      }
+      [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, rawFirst, rawLast, false);
+    } else {
+      proximityGapIndices = new Set();
+      [firstIdx, lastIdx] = [rawFirst, rawLast];
+    }
+  }
+
+  for (let i = firstIdx; i <= lastIdx; i++) {
+    const tr = rowEls[i];
+    const textContent = tr.querySelector(".text-content");
+    if (textContent && !textContent.closest("td").classList.contains("empty") && !textContent.textContent.trim()) {
+      textContent.classList.add("ws-line-selected");
+    }
+    if (isArmedGapRow(tr, wholeFile)) tr.classList.add("gap-armed");
+  }
+}
+
+document.addEventListener("selectionchange", updateSelectionVisuals);
+
+// Whole-pane copy uses the server-sent original text for that side rather
+// than the diff rows: ignore-whitespace mode drops blank-only insert/delete
+// rows from `rows` entirely, so they can't be recovered by walking rows/gaps.
+function fullSideText(file, side) {
+  return side === "left" ? file.fullTextA : file.fullTextB;
+}
+
+// True when the selection touches both the pane's first and last row, i.e. a
+// manual drag from top to bottom — even though the collapsed lines in
+// between (in any unexpanded gaps) were never actually in the DOM to select.
+function selectionSpansWholePane(selection, scope) {
+  const rows = scope.querySelectorAll("tr");
+  if (!rows.length) return false;
+  return selection.containsNode(rows[0], true) && selection.containsNode(rows[rows.length - 1], true);
+}
+
+// The literal line terminator for a row's stored "crlf"/"lf"/"" ending.
+function eolString(ending) {
+  return ending === "crlf" ? "\r\n" : ending === "lf" ? "\n" : "";
+}
+
+// The hidden text for one side of a collapsed gap (looked up by its original
+// index in file.rows, which dataset.gapIndex is set from). Preserves each
+// hidden line's own CRLF/LF ending instead of assuming one for the whole gap.
+function gapHiddenText(file, gapIndex, side) {
+  const gapRow = file.rows[gapIndex];
+  if (!gapRow || gapRow.type !== "gap" || !Array.isArray(gapRow.rows)) return "";
+  return gapRow.rows
+    .map((row) => {
+      const text = side === "left" ? row.leftText : row.rightText;
+      if (text === null || text === undefined) return null;
+      const ending = side === "left" ? row.leftEnding : row.rightEnding;
+      return text + eolString(ending);
+    })
+    .filter((text) => text !== null)
+    .join("");
+}
+
+function copyDiffSelection(event, scroll, file) {
   const selection = window.getSelection();
   const anchor = selection && selection.anchorNode;
   const anchorElement = anchor && (anchor.nodeType === Node.ELEMENT_NODE ? anchor : anchor.parentElement);
-  if (!selection || !anchorElement || !anchorElement.closest(".text-content")) return;
+  if (!selection || !anchorElement) return;
+
+  // A selection covering an entire pane — via right-click/Ctrl+A, or a manual
+  // drag spanning its first line to its last — must include lines collapsed
+  // into unexpanded gaps, so read the full row model instead of DOM text.
+  const scope = scopeOf(anchorElement);
+  if (scope && scroll.contains(scope) && (wholeFileScope === scope || selectionSpansWholePane(selection, scope))) {
+    const side = scope.classList.contains("right-pane") ? "right" : "left";
+    event.clipboardData.setData("text/plain", fullSideText(file, side));
+    event.preventDefault();
+    return;
+  }
+
+  if (!anchorElement.closest(".text-content")) return;
+
+  // Within a side-by-side pane, rebuild the copied text row-by-row so any
+  // gap the drag passed near (see markGapsNearPoint) contributes its hidden
+  // lines, instead of being silently skipped like an untouched gap.
+  if (scope && scroll.contains(scope)) {
+    const side = scope.classList.contains("right-pane") ? "right" : "left";
+    const rowEls = Array.from(scope.querySelectorAll("tbody > tr"));
+    const range = selectedRowRange(rowEls, selection);
+
+    if (range) {
+      const [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, range[0], range[1], false);
+      const parts = [];
+      for (let i = firstIdx; i <= lastIdx; i++) {
+        const tr = rowEls[i];
+        if (tr.dataset.hasText === "false") continue; // no line exists on this side; contributes nothing
+        const textContent = tr.querySelector(".text-content");
+        if (textContent) {
+          parts.push(textContent.textContent + eolString(tr.dataset.ending));
+        } else if (isArmedGapRow(tr, false)) {
+          const hidden = gapHiddenText(file, Number(tr.dataset.gapIndex), side);
+          if (hidden) parts.push(hidden);
+        }
+      }
+      event.clipboardData.setData("text/plain", parts.join(""));
+      event.preventDefault();
+      return;
+    }
+  }
 
   const selectedRows = Array.from(scroll.querySelectorAll(".text-content"))
     .filter((textContent) => selection.containsNode(textContent, true));
@@ -343,16 +666,56 @@ function copyDiffSelection(event, scroll) {
   event.preventDefault();
 }
 
-function setStatus(message, isError) {
-  if (!message) {
-    statusEl.hidden = true;
-    statusEl.textContent = "";
-    statusEl.classList.remove("error");
-    return;
+// Blocking error modal: shows a title + message and resolves once OK is clicked.
+function showErrorModal(title, message) {
+  const dialog = document.getElementById("error-dialog");
+  const titleEl = document.getElementById("error-dialog-title");
+  const messageEl = document.getElementById("error-dialog-message");
+  const okButton = document.getElementById("error-dialog-ok-btn");
+  if (!dialog || !titleEl || !messageEl || !okButton) return Promise.resolve();
+
+  titleEl.textContent = title;
+  messageEl.textContent = message;
+  return new Promise((resolve) => {
+    const dismiss = () => {
+      dialog.close();
+      okButton.removeEventListener("click", dismiss);
+      resolve();
+    };
+    okButton.addEventListener("click", dismiss);
+    dialog.showModal();
+  });
+}
+
+let infoToastHideTimer = null;
+
+// Small, titleless, non-blocking toast. Transient messages (isTransient=true)
+// show a spinner and stay until hideInfoModal() is called; others show plain
+// text and fade out on their own after a short delay.
+function showInfoModal(isTransient, message) {
+  const toast = document.getElementById("info-toast");
+  const spinner = document.getElementById("info-toast-spinner");
+  const messageEl = document.getElementById("info-toast-message");
+  if (!toast || !spinner || !messageEl) return;
+
+  if (infoToastHideTimer) {
+    clearTimeout(infoToastHideTimer);
+    infoToastHideTimer = null;
   }
-  statusEl.hidden = false;
-  statusEl.textContent = message;
-  statusEl.classList.toggle("error", !!isError);
+  messageEl.textContent = message;
+  spinner.hidden = !isTransient;
+  toast.classList.add("visible");
+  if (!isTransient) infoToastHideTimer = setTimeout(hideInfoModal, 3500);
+}
+
+function hideInfoModal() {
+  const toast = document.getElementById("info-toast");
+  if (!toast) return;
+  if (infoToastHideTimer) {
+    clearTimeout(infoToastHideTimer);
+    infoToastHideTimer = null;
+  }
+  toast.classList.remove("visible");
 }
 
 function updateWhitespaceButton() {
@@ -379,21 +742,8 @@ function setSyncActions() {
   syncActions.append(makeBMatchA, makeAMatchB);
 }
 
-function confirmChangedFolders() {
-  const dialog = document.getElementById("content-changed-dialog");
-  const okButton = document.getElementById("content-changed-ok-btn");
-  if (!dialog || !okButton) return Promise.resolve(false);
-
-  return new Promise((resolve) => {
-    const dismiss = () => {
-      dialog.close();
-      okButton.removeEventListener("click", dismiss);
-      resolve(false);
-    };
-    okButton.addEventListener("click", dismiss);
-    dialog.showModal();
-  });
-}
+const CONTENT_CHANGED_MESSAGE =
+  "The folder contents changed after the last comparison. Match was aborted. Run Compare again before mirroring.";
 
 function confirmSyncFolders(sourceLabel, targetLabel) {
   const dialog = document.getElementById("sync-confirm-dialog");
@@ -420,6 +770,13 @@ function confirmSyncFolders(sourceLabel, targetLabel) {
   });
 }
 
+// Re-enable action buttons immediately, rather than waiting on an awaited
+// modal's dismissal, so they don't look stuck-disabled while it's open.
+function reenableActionButtons() {
+  compareBtn.disabled = false;
+  syncActions.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+}
+
 async function syncFolders(direction) {
   const targetLabel = direction === "A" ? "Folder B" : "Folder A";
 
@@ -435,17 +792,19 @@ async function syncFolders(direction) {
     });
     const checkData = await checkRes.json();
     if (checkRes.status === 409) {
-      await confirmChangedFolders();
-      setStatus("");
+      reenableActionButtons();
+      await showErrorModal("Folder contents changed", CONTENT_CHANGED_MESSAGE);
       return;
     }
     if (!checkRes.ok) throw new Error(checkData.error || `Request failed (${checkRes.status})`);
+    reenableActionButtons();
     if (!await confirmSyncFolders(direction === "A" ? "Folder A" : "Folder B", targetLabel)) {
-      setStatus("");
       return;
     }
+    compareBtn.disabled = true;
+    syncActions.querySelectorAll("button").forEach((button) => { button.disabled = true; });
 
-    setStatus(`Updating ${targetLabel}\u2026`);
+    showInfoModal(true, `Updating ${targetLabel}\u2026`);
     const res = await fetch("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -458,7 +817,9 @@ async function syncFolders(direction) {
     });
     const data = await res.json();
     if (res.status === 409) {
-      await confirmChangedFolders();
+      hideInfoModal();
+      reenableActionButtons();
+      await showErrorModal("Folder contents changed", CONTENT_CHANGED_MESSAGE);
       return;
     }
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
@@ -466,9 +827,18 @@ async function syncFolders(direction) {
     activeCategory = null;
     renderResults();
     const { created, updated, deleted, errors } = data.changes;
-    setStatus(`Updated ${targetLabel}: ${created.length} created, ${updated.length} updated, ${deleted.length} deleted${errors.length ? `, ${errors.length} error(s)` : ""}.`, errors.length > 0);
+    hideInfoModal();
+    const summary = `Updated ${targetLabel}: ${created.length} created, ${updated.length} updated, ${deleted.length} deleted${errors.length ? `, ${errors.length} error(s)` : ""}.`;
+    if (errors.length > 0) {
+      reenableActionButtons();
+      await showErrorModal("Sync completed with errors", summary);
+    } else {
+      showInfoModal(false, summary);
+    }
   } catch (err) {
-    setStatus(err.message || "Could not update the folder.", true);
+    hideInfoModal();
+    reenableActionButtons();
+    await showErrorModal("Could not update the folder", err.message || "Could not update the folder.");
   } finally {
     compareBtn.disabled = false;
     syncActions.querySelectorAll("button").forEach((button) => { button.disabled = false; });
@@ -476,7 +846,7 @@ async function syncFolders(direction) {
 }
 
 // ---------- diff rendering ----------
-function renderSideBySide(rows) {
+function renderSideBySide(rows, file) {
   function paneTable(side) {
     const table = el("table", `diff-table side-by-side pane-table ${side}-pane`);
     const columns = document.createElement("colgroup");
@@ -498,18 +868,23 @@ function renderSideBySide(rows) {
         cell.colSpan = 3;
         if (row.gapIndex != null) {
           tr.dataset.gapIndex = row.gapIndex;
+          tr.dataset.expanded = row.expanded ? "true" : "false";
           tr.classList.add("gap-toggle");
         }
         tr.appendChild(cell);
       } else if (side === "left") {
         const hasText = row.leftNum !== null;
         const segments = row.type === "replace" ? characterSegments(row.leftText, row.rightText).left : null;
+        tr.dataset.hasText = hasText ? "true" : "false";
+        if (hasText) tr.dataset.ending = row.leftEnding || "";
         tr.appendChild(td("num", hasText ? row.leftNum : ""));
         tr.appendChild(td(hasText ? "sign left" : "sign", hasText && (row.type === "delete" || row.type === "replace") ? "-" : ""));
         tr.appendChild(textTd(hasText ? "text left" : "text empty left", hasText ? row.leftText : "", hasText ? row.leftEnding : "", segments));
       } else {
         const hasText = row.rightNum !== null;
         const segments = row.type === "replace" ? characterSegments(row.leftText, row.rightText).right : null;
+        tr.dataset.hasText = hasText ? "true" : "false";
+        if (hasText) tr.dataset.ending = row.rightEnding || "";
         tr.appendChild(td("num", hasText ? row.rightNum : ""));
         tr.appendChild(td(hasText ? "sign right" : "sign", hasText && (row.type === "insert" || row.type === "replace") ? "+" : ""));
         tr.appendChild(textTd(hasText ? "text right" : "text empty right", hasText ? row.rightText : "", hasText ? row.rightEnding : "", segments));
@@ -530,7 +905,7 @@ function renderSideBySide(rows) {
   view.append(leftPane, rightPane);
   const scroll = el("div", "diff-scroll");
   scroll.appendChild(view);
-  scroll.addEventListener("copy", (event) => copyDiffSelection(event, scroll));
+  scroll.addEventListener("copy", (event) => copyDiffSelection(event, scroll, file));
   return scroll;
 }
 
@@ -543,7 +918,7 @@ function unifiedRow(type, leftNum, rightNum, sign, text, ending, segments) {
   return tr;
 }
 
-function renderUnified(rows) {
+function renderUnified(rows, file) {
   const table = el("table", "diff-table unified-diff");
   const body = el("tbody");
   for (const row of rows) {
@@ -577,7 +952,7 @@ function renderUnified(rows) {
   table.appendChild(body);
   const scroll = el("div", "diff-scroll");
   scroll.appendChild(table);
-  scroll.addEventListener("copy", (event) => copyDiffSelection(event, scroll));
+  scroll.addEventListener("copy", (event) => copyDiffSelection(event, scroll, file));
   return scroll;
 }
 
@@ -585,6 +960,7 @@ function renderFileDiff(file, autoOpen) {
   const details = el("details", "file-diff");
   const summary = el("summary");
   summary.appendChild(el("span", "name", file.path));
+  summary.appendChild(fileSidesSuffix(file.path, "diff"));
   if (file.stats) {
     if (file.stats.added) summary.appendChild(el("span", "stat add", `+${file.stats.added}`));
     if (file.stats.removed) summary.appendChild(el("span", "stat del", `-${file.stats.removed}`));
@@ -637,7 +1013,7 @@ function buildFileDiffBody(details, file) {
     details.querySelectorAll(".diff-scroll, .diff-pan-scrolls").forEach((node) => node.remove());
 
     const rows = effectiveRows();
-    const scroll = viewMode === "unified" ? renderUnified(rows) : renderSideBySide(rows);
+    const scroll = viewMode === "unified" ? renderUnified(rows, file) : renderSideBySide(rows, file);
     details.appendChild(scroll);
     const diffTable = scroll.querySelector(".diff-table");
     const isSideBySide = diffTable.classList.contains("side-by-side");
@@ -701,13 +1077,14 @@ function buildFileDiffBody(details, file) {
 }
 
 // ---------- section rendering ----------
-function fileListSection(title, items, className, mapFn) {
+function fileListSection(title, items, kind, mapFn) {
   const section = el("section", "section");
   section.appendChild(el("h2", null, `${title} (${items.length})`));
   const ul = el("ul", "file-list");
   for (const item of items) {
     const li = el("li");
     li.appendChild(el("span", "path", item.path));
+    li.appendChild(fileSidesSuffix(item.path, kind));
     if (mapFn) {
       const extra = mapFn(item);
       if (extra) li.appendChild(el("span", "badge", extra));
@@ -765,10 +1142,10 @@ function renderResults() {
   const paths = el("div", "paths");
   const pathColA = el("div", "path-col path-col-a");
   pathColA.appendChild(el("span", "path-label a-label", "A:"));
-  pathColA.appendChild(el("span", "path-value", r.folderA));
+  pathColA.appendChild(folderLink(r.folderA));
   const pathColB = el("div", "path-col path-col-b");
   pathColB.appendChild(el("span", "path-label b-label", "B:"));
-  pathColB.appendChild(el("span", "path-value", r.folderB));
+  pathColB.appendChild(folderLink(r.folderB));
   paths.append(pathColA, pathColB);
   resultsEl.appendChild(paths);
 
@@ -820,7 +1197,7 @@ function renderResults() {
   saveSession();
 }
 
-const SESSION_KEY = "folderDiffSession";
+const SESSION_KEY = "sochaDiffSession";
 
 // Read the settings snapshot saved alongside the last persisted session, if any.
 function readPersistedComparedSettingsKey() {
@@ -887,12 +1264,12 @@ form.addEventListener("submit", async (event) => {
   const folderA = document.getElementById("folderA").value.trim();
   const folderB = document.getElementById("folderB").value.trim();
   if (!folderA || !folderB) {
-    setStatus("Please enter both folder paths.", true);
+    await showErrorModal("Missing folder paths", "Please enter both folder paths.");
     return;
   }
 
   compareBtn.disabled = true;
-  setStatus("Comparing\u2026");
+  showInfoModal(true, "Comparing\u2026");
   resultsEl.innerHTML = "";
   try {
     const res = await fetch("/api/compare", {
@@ -907,11 +1284,13 @@ form.addEventListener("submit", async (event) => {
     lastResult = data;
     lastComparedSettingsKey = settingsKey(currentIgnoreWhitespace, currentIgnoredDirectories);
     setComparePending(false);
-    setStatus("");
+    hideInfoModal();
     renderResults();
   } catch (err) {
     lastResult = null;
-    setStatus(err.message || "Something went wrong.", true);
+    hideInfoModal();
+    compareBtn.disabled = false;
+    await showErrorModal("Compare failed", err.message || "Something went wrong.");
   } finally {
     compareBtn.disabled = false;
   }
@@ -965,7 +1344,7 @@ function applyWhitespaceIndicator(ignore) {
   if (label) label.textContent = ignore ? "Whitespace ignored" : "Whitespace aware";
   if (tooltip) {
     tooltip.textContent = ignore
-      ? "Whitespace differences are ignored by the file comparer. Click to change to whitespace ware."
+      ? "Whitespace differences are ignored by the file comparer. Click to change to whitespace aware."
       : "The file comparer is whitespace aware. Click to change to whitespace ignored.";
   }
   // Single source of truth: keep the Settings checkbox in lockstep with the header indicator.
