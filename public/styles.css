@@ -14,8 +14,9 @@
   --rep-border: #d29922;
   --num: #6e7681;
   --gap: #21262d;
-  /* Fully opaque so selection indicators never blend with what's underneath. */
-  --selection-tint: color-mix(in srgb, var(--accent) 45%, var(--panel));
+  /* Native-like opaque selection blue (classic system highlight ~#316AC5).
+     Solid so indicators never muddy with red/green diff row backgrounds. */
+  --selection-tint: #316AC5;
 }
 
 @font-face {
@@ -1290,12 +1291,12 @@ body.drag-selecting tr.gap-toggle:not(.gap-armed):hover td {
   background: var(--gap);
 }
 
-/* A single, fully opaque "soft blue" used for all three selection indicators
-   below, so the result never varies depending on what's underneath (a truly
-   translucent color would blend differently over each row's own background). */
+/* A single, fully opaque native-like blue used for all three selection
+   indicators below, so the result never varies depending on what's underneath
+   (a translucent color would muddy differently over each row's add/del bg). */
 
-/* Force native selection to the same solid, subtle color everywhere, instead
-   of blending translucently with each row's own background (add/del tint). */
+/* Force native ::selection to the same solid opaque blue everywhere, instead
+   of the browser's translucent Highlight blending with add/del row tints. */
 .diff-table ::selection {
   background: var(--selection-tint);
   color: var(--text);
