@@ -257,7 +257,7 @@ app.post("/api/sync/check", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-const HOST = "127.0.0.1";
+const HOST = "localhost";
 
 app.listen(PORT, HOST, () => {
   // Bound to localhost only: the app reads arbitrary local paths, so it must
