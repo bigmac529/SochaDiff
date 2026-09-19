@@ -57,7 +57,7 @@ function waitForServer(port, timeoutMs = 15000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
-      const req = http.get({ host: "127.0.0.1", port, path: "/", timeout: 1000 }, (res) => {
+      const req = http.get({ host: "localhost", port, path: "/", timeout: 1000 }, (res) => {
         res.resume();
         resolve();
       });
@@ -306,7 +306,7 @@ async function main() {
 
   const browser = await loadPlaywright();
   const port = await getEphemeralPort();
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = `http://localhost:${port}`;
 
   const server = spawn(process.execPath, [path.join(ROOT, "server.js")], {
     cwd: ROOT,
