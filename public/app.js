@@ -383,10 +383,33 @@ function autoScrollStep() {
   dragRaf = requestAnimationFrame(autoScrollStep);
 }
 
+// While drag-selecting in one pane, mark every other .select-scope inert so
+// native selection cannot weave into the opposite pane (defense-in-depth with
+// the selectionchange clamp below).
+function clearSelectInert() {
+  document.querySelectorAll(".select-scope.select-inert").forEach((el) => {
+    el.classList.remove("select-inert");
+  });
+}
+
+function setOppositeScopesInert(activeScope) {
+  clearSelectInert();
+  if (!activeScope) return;
+  const root = activeScope.closest(".file-diff") || document;
+  root.querySelectorAll(".select-scope").forEach((scope) => {
+    if (scope !== activeScope) scope.classList.add("select-inert");
+  });
+}
+
 function setDragSelecting(on) {
   dragSelecting = !!on;
   document.documentElement.classList.toggle("drag-selecting", dragSelecting);
   document.body.classList.toggle("drag-selecting", dragSelecting);
+  if (dragSelecting && selectionScope) {
+    setOppositeScopesInert(selectionScope);
+  } else {
+    clearSelectInert();
+  }
 }
 
 document.addEventListener("mousedown", (event) => {

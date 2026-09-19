@@ -1093,6 +1093,14 @@ button {
   cursor: text;
 }
 
+/* Opposite pane(s) while the user is drag-selecting in another .select-scope.
+   Blocks native selection weave/bleed; active pane keeps its user-select: text. */
+.select-scope.select-inert,
+.select-scope.select-inert * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
 .diff-table td.num,
 .diff-table td.sign,
 .diff-table tr.gap td {

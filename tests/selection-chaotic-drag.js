@@ -458,12 +458,53 @@ async function main() {
       const leftStart = await centerOfRow(page, "left", firstText, FILE);
       const leftEnd = await centerOfRow(page, "left", lastText, FILE);
       const rightMid = await centerOfRow(page, "right", midText, FILE);
-      await chaoticDrag(page, [
-        leftStart,
-        { x: leftStart.x + 30, y: (leftStart.y + leftEnd.y) / 2 },
-        { x: rightMid.x, y: rightMid.y },
-        { x: leftEnd.x, y: leftEnd.y },
-      ]);
+      // Mid-drag: enter the opposite pane and assert select-inert + no native
+      // focus there before completing the path (proves proactive inert, not
+      // only post-mouseup clamp cleanup).
+      await page.mouse.move(leftStart.x, leftStart.y);
+      await page.mouse.down();
+      await page.mouse.move(leftStart.x + 30, (leftStart.y + leftEnd.y) / 2, { steps: 6 });
+      await page.mouse.move(rightMid.x, rightMid.y, { steps: 10 });
+      await sleep(30);
+      const midDrag = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        if (!details) return null;
+        const leftPane = details.querySelector(".left-pane.select-scope");
+        const rightPane = details.querySelector(".right-pane.select-scope");
+        const sel = window.getSelection();
+        let focusInRight = false;
+        let anchorInRight = false;
+        if (sel && sel.rangeCount && !sel.isCollapsed) {
+          const focusEl =
+            sel.focusNode &&
+            (sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement);
+          const anchorEl =
+            sel.anchorNode &&
+            (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+          focusInRight = !!(focusEl && rightPane.contains(focusEl));
+          anchorInRight = !!(anchorEl && rightPane.contains(anchorEl));
+        }
+        return {
+          rightInert: rightPane.classList.contains("select-inert"),
+          leftInert: leftPane.classList.contains("select-inert"),
+          focusInRight,
+          anchorInRight,
+          rightWs: rightPane.querySelectorAll(".ws-line-selected").length,
+        };
+      }, FILE);
+      assert("mid-drag opposite pane is select-inert", !!(midDrag && midDrag.rightInert), JSON.stringify(midDrag));
+      assert("mid-drag active pane is not select-inert", !!(midDrag && !midDrag.leftInert), JSON.stringify(midDrag));
+      assert(
+        "mid-drag native selection not in opposite pane",
+        !!(midDrag && !midDrag.focusInRight && !midDrag.anchorInRight),
+        JSON.stringify(midDrag)
+      );
+      assert("mid-drag no right ws-line-selected", !!(midDrag && midDrag.rightWs === 0), JSON.stringify(midDrag));
+      await page.mouse.move(leftEnd.x, leftEnd.y, { steps: 8 });
+      await page.mouse.up();
+      await sleep(100);
       left = await paneSnapshot(page, "left", FILE);
       const right = await paneSnapshot(page, "right", FILE);
       assert(
@@ -475,6 +516,14 @@ async function main() {
         right.wsMarked.length === 0 && right.gapArmed.length === 0,
         `right ws=${right.wsMarked} gap=${right.gapArmed}`
       );
+      const rightCleared = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        const rightPane = details && details.querySelector(".right-pane.select-scope");
+        return rightPane ? !rightPane.classList.contains("select-inert") : false;
+      }, FILE);
+      assert("mouseup clears select-inert on opposite pane", rightCleared);
       const copied = await copySelectionText(page);
       if (copied) {
         assert("weave copy has no right-pane CHANGED B", !/CHANGED B/.test(copied), `copy=${copied.slice(0, 80)}`);
