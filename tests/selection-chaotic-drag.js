@@ -751,6 +751,46 @@ async function main() {
       await sleep(30);
     });
 
+    // Chromium triple-click selects a line but often paints the next row's
+    // gutters and parks focus at offset 0 of the next .text-content. Copy must
+    // not pull that neighboring line in (selectedRowRange ignores gutter-only hits).
+    await runScenario("triple-click line copy does not include next row", async () => {
+      await clearNativeSelection(page);
+      const line7Idx = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        const rows = Array.from(details.querySelectorAll(".left-pane tbody > tr"));
+        return rows.findIndex((tr) => {
+          const tc = tr.querySelector(".text-content");
+          return tc && tc.textContent.trim() === "line 7";
+        });
+      }, FILE);
+      assert("line 7 row present for triple-click", line7Idx >= 0, `idx=${line7Idx}`);
+      if (line7Idx < 0) return;
+      const pt = await centerOfRow(page, "left", line7Idx, FILE);
+      await page.mouse.click(pt.x, pt.y, { clickCount: 3 });
+      await sleep(50);
+      const copied = await copySelectionText(page);
+      const text = copied || "";
+      assert(
+        "triple-click copy includes line 7",
+        /^line 7\r?\n?$/.test(text) || text.trim() === "line 7",
+        `copy=${JSON.stringify(text)}`
+      );
+      assert(
+        "triple-click copy excludes line 8",
+        !/line 8/.test(text),
+        `copy=${JSON.stringify(text)}`
+      );
+      assert(
+        "triple-click copy has no gutter leakage",
+        !/^\d+\t/m.test(text) && !/unchanged lines/.test(text),
+        `copy=${JSON.stringify(text)}`
+      );
+      await clearNativeSelection(page);
+    });
+
     await runScenario("drag near pane edge stays in-scope", async () => {
       await clearNativeSelection(page);
       const a = await centerOfRow(page, "left", firstText, FILE);

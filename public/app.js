@@ -508,11 +508,30 @@ document.addEventListener("selectionchange", () => {
 });
 
 // Row index for a selection anchor/focus node within rowEls, or -1.
+// Only resolves nodes inside .text-content so gutter (td.num / td.sign) hits
+// do not count as selecting that row — Chromium triple-click often parks the
+// focus at offset 0 of the next row's text while painting only that row's
+// gutters, which previously pulled an extra line into copy.
 function rowIndexForNode(node, rowEls) {
   const element = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
   if (!element) return -1;
-  const tr = element.closest("tr");
+  const textContent = element.closest(".text-content");
+  if (!textContent) return -1;
+  const tr = textContent.closest("tr");
   return tr ? rowEls.indexOf(tr) : -1;
+}
+
+// True when a selection client rect overlaps a .text-content box in both axes.
+// Vertical-midpoint-in-span is too coarse: a gutter-only strip on the next row
+// still puts that row's midpoint inside the selection's top/bottom.
+function textContentIntersectsRects(textContent, rects) {
+  const box = textContent.getBoundingClientRect();
+  for (const r of rects) {
+    const vert = r.bottom > box.top + 1 && r.top < box.bottom - 1;
+    const horiz = r.right > box.left + 1 && r.left < box.right - 1;
+    if (vert && horiz) return true;
+  }
+  return false;
 }
 
 // The [firstVisibleRow, lastVisibleRow] the selection spans, derived from its
@@ -522,26 +541,20 @@ function rowIndexForNode(node, rowEls) {
 // skipped, so the bounds are always visible text rows.
 // Empty .text-content can yield zero-width or empty client rects in Chromium;
 // accept height-only rects and fall back to anchor/focus rows when needed.
+// Rect hits must overlap .text-content (not merely td.num / td.sign): native
+// line selection often paints the next row's gutters without selecting its text.
 function selectedRowRange(rowEls, selection) {
   if (!selection.rangeCount) return null;
   const rects = Array.from(selection.getRangeAt(0).getClientRects()).filter((r) => r.height > 0);
   let first = -1;
   let last = -1;
   if (rects.length) {
-    let top = Infinity;
-    let bottom = -Infinity;
-    for (const r of rects) {
-      top = Math.min(top, r.top);
-      bottom = Math.max(bottom, r.bottom);
-    }
     for (let i = 0; i < rowEls.length; i++) {
-      if (!rowEls[i].querySelector(".text-content")) continue; // skip gap rows
-      const b = rowEls[i].getBoundingClientRect();
-      const cy = (b.top + b.bottom) / 2;
-      if (cy >= top - 1 && cy <= bottom + 1) {
-        if (first === -1) first = i;
-        last = i;
-      }
+      const textContent = rowEls[i].querySelector(".text-content");
+      if (!textContent) continue; // skip gap rows
+      if (!textContentIntersectsRects(textContent, rects)) continue;
+      if (first === -1) first = i;
+      last = i;
     }
   }
   if (first === -1) {
