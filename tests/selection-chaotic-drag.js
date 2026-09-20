@@ -432,6 +432,23 @@ async function main() {
       );
       const right = await paneSnapshot(page, "right", FILE);
       assert("gap arm stays single-pane", right.gapArmed.length === 0);
+      // Sticky proximity arm must survive mouseup so Copy pulls hidden gap.rows
+      // (lines 1–6 in sel-a) even though the gap itself is user-select:none.
+      const copied = await copySelectionText(page);
+      assert(
+        "armed-gap copy includes hidden line 1",
+        /line 1/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 120))}`
+      );
+      assert(
+        "armed-gap copy includes hidden line 6",
+        /line 6/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 120))}`
+      );
+      assert(
+        "armed-gap copy stays single-pane (no CHANGED B)",
+        !/CHANGED B/.test(copied || "")
+      );
     });
 
     await runScenario("gap no-arm when drag stays on interior text only", async () => {
@@ -643,6 +660,94 @@ async function main() {
         JSON.stringify(after)
       );
       await page.mouse.up().catch(() => {});
+      await sleep(30);
+    });
+
+    await runScenario("window blur clears select-inert without mouseup", async () => {
+      await clearNativeSelection(page);
+      const leftStart = await centerOfRow(page, "left", firstText, FILE);
+      const rightMid = await centerOfRow(page, "right", midText, FILE);
+      await page.mouse.move(leftStart.x, leftStart.y);
+      await page.mouse.down();
+      await page.mouse.move(rightMid.x, rightMid.y, { steps: 10 });
+      await sleep(30);
+      const mid = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        if (!details) return null;
+        const rightPane = details.querySelector(".right-pane.select-scope");
+        return {
+          rightInert: !!(rightPane && rightPane.classList.contains("select-inert")),
+          dragSelecting: document.documentElement.classList.contains("drag-selecting"),
+        };
+      }, FILE);
+      assert("pre-blur opposite pane is select-inert", !!(mid && mid.rightInert && mid.dragSelecting), JSON.stringify(mid));
+
+      // Synthetic window blur (alt-tab / WebView2 focus loss) — same handler as
+      // the real blur event; mouseup may never arrive.
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("blur"));
+      });
+      await sleep(30);
+      const after = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        if (!details) return null;
+        const rightPane = details.querySelector(".right-pane.select-scope");
+        return {
+          rightInert: !!(rightPane && rightPane.classList.contains("select-inert")),
+          inertCount: document.querySelectorAll(".select-inert").length,
+          dragSelecting: document.documentElement.classList.contains("drag-selecting"),
+          rightUserSelect: rightPane
+            ? getComputedStyle(rightPane.querySelector(".text-content") || rightPane).userSelect
+            : null,
+        };
+      }, FILE);
+      assert(
+        "blur clears select-inert",
+        !!(after && !after.rightInert && after.inertCount === 0 && !after.dragSelecting),
+        JSON.stringify(after)
+      );
+      assert(
+        "blur restores opposite pane user-select",
+        !!(after && after.rightUserSelect && after.rightUserSelect !== "none"),
+        JSON.stringify(after)
+      );
+      await page.mouse.up().catch(() => {});
+      await sleep(30);
+    });
+
+    await runScenario("whole-pane contextmenu copy includes collapsed gaps", async () => {
+      await clearNativeSelection(page);
+      const textPt = await centerOfRow(page, "left", firstText, FILE);
+      // Right-click selects the whole pane (A) so Copy includes collapsed gap lines.
+      await page.mouse.click(textPt.x, textPt.y, { button: "right" });
+      await sleep(50);
+      const copied = await copySelectionText(page);
+      assert(
+        "whole-pane copy includes leading collapsed line 1",
+        /line 1/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 120))}`
+      );
+      assert(
+        "whole-pane copy includes trailing collapsed line 20",
+        /line 20/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(-80))}`
+      );
+      assert(
+        "whole-pane copy includes CHANGED A",
+        /CHANGED A/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 160))}`
+      );
+      assert(
+        "whole-pane copy stays single-pane (no CHANGED B)",
+        !/CHANGED B/.test(copied || "")
+      );
+      // Dismiss any native menu side-effects for later scenarios.
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.mouse.click(5, 5).catch(() => {});
       await sleep(30);
     });
 
