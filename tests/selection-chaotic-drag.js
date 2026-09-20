@@ -530,6 +530,122 @@ async function main() {
       }
     });
 
+    await runScenario("pointercancel clears select-inert without mouseup", async () => {
+      await clearNativeSelection(page);
+      const leftStart = await centerOfRow(page, "left", firstText, FILE);
+      const leftEnd = await centerOfRow(page, "left", lastText, FILE);
+      await page.mouse.move(leftStart.x, leftStart.y);
+      await page.mouse.down();
+      await page.mouse.move(leftStart.x + 12, (leftStart.y + leftEnd.y) / 2, { steps: 6 });
+      await sleep(20);
+      const mid = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        const rightPane = details && details.querySelector(".right-pane.select-scope");
+        return {
+          rightInert: !!(rightPane && rightPane.classList.contains("select-inert")),
+          dragSelecting: document.body.classList.contains("drag-selecting"),
+        };
+      }, FILE);
+      assert("pre-cancel opposite pane is select-inert", !!(mid && mid.rightInert && mid.dragSelecting), JSON.stringify(mid));
+      // Cancel without mouseup (touch/stylus / WebView2).
+      await page.evaluate(() => {
+        document.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, cancelable: true }));
+      });
+      await sleep(40);
+      const after = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        const rightPane = details && details.querySelector(".right-pane.select-scope");
+        return {
+          rightInert: !!(rightPane && rightPane.classList.contains("select-inert")),
+          inertCount: document.querySelectorAll(".select-inert").length,
+          dragSelecting: document.body.classList.contains("drag-selecting"),
+          rightUserSelect: rightPane
+            ? getComputedStyle(rightPane.querySelector(".text-content") || rightPane).userSelect
+            : null,
+        };
+      }, FILE);
+      assert(
+        "pointercancel clears select-inert",
+        !!(after && !after.rightInert && after.inertCount === 0 && !after.dragSelecting),
+        JSON.stringify(after)
+      );
+      assert(
+        "pointercancel restores opposite pane user-select",
+        !!(after && after.rightUserSelect && after.rightUserSelect !== "none"),
+        JSON.stringify(after)
+      );
+      // Swallow any lingering button state so later scenarios start clean.
+      await page.mouse.up().catch(() => {});
+      await sleep(30);
+    });
+
+    await runScenario("contextmenu without mouseup clears select-inert", async () => {
+      await clearNativeSelection(page);
+      const leftStart = await centerOfRow(page, "left", firstText, FILE);
+      const leftEnd = await centerOfRow(page, "left", lastText, FILE);
+      await page.mouse.move(leftStart.x, leftStart.y);
+      await page.mouse.down();
+      await page.mouse.move(leftStart.x + 12, (leftStart.y + leftEnd.y) / 2, { steps: 6 });
+      await sleep(20);
+      const mid = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        const rightPane = details && details.querySelector(".right-pane.select-scope");
+        return {
+          rightInert: !!(rightPane && rightPane.classList.contains("select-inert")),
+          dragSelecting: document.body.classList.contains("drag-selecting"),
+        };
+      }, FILE);
+      assert("pre-contextmenu opposite pane is select-inert", !!(mid && mid.rightInert && mid.dragSelecting), JSON.stringify(mid));
+      // Fire contextmenu and intentionally omit mouseup (Windows / WebView2).
+      await page.evaluate(({ x, y }) => {
+        const el = document.elementFromPoint(x, y);
+        if (el) {
+          el.dispatchEvent(
+            new MouseEvent("contextmenu", {
+              bubbles: true,
+              cancelable: true,
+              clientX: x,
+              clientY: y,
+              button: 2,
+            })
+          );
+        }
+      }, { x: leftStart.x + 12, y: (leftStart.y + leftEnd.y) / 2 });
+      await sleep(40);
+      const after = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        const rightPane = details && details.querySelector(".right-pane.select-scope");
+        return {
+          rightInert: !!(rightPane && rightPane.classList.contains("select-inert")),
+          inertCount: document.querySelectorAll(".select-inert").length,
+          dragSelecting: document.body.classList.contains("drag-selecting"),
+          rightUserSelect: rightPane
+            ? getComputedStyle(rightPane.querySelector(".text-content") || rightPane).userSelect
+            : null,
+        };
+      }, FILE);
+      assert(
+        "contextmenu clears select-inert without mouseup",
+        !!(after && !after.rightInert && after.inertCount === 0 && !after.dragSelecting),
+        JSON.stringify(after)
+      );
+      assert(
+        "contextmenu restores opposite pane user-select",
+        !!(after && after.rightUserSelect && after.rightUserSelect !== "none"),
+        JSON.stringify(after)
+      );
+      await page.mouse.up().catch(() => {});
+      await sleep(30);
+    });
+
     await runScenario("drag near pane edge stays in-scope", async () => {
       await clearNativeSelection(page);
       const a = await centerOfRow(page, "left", firstText, FILE);

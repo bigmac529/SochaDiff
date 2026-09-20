@@ -412,6 +412,20 @@ function setDragSelecting(on) {
   }
 }
 
+// End an in-progress drag (clear select-inert + I-beam lock + auto-scroll).
+// mouseup is the normal path; pointercancel / blur / contextmenu must also
+// end it — Windows/WebView2 often swallow mouseup after right-click, and
+// touch/stylus cancel never fires mouseup, leaving the opposite pane stuck
+// with user-select:none.
+function endDragSelecting() {
+  setDragSelecting(false);
+  dragPanScroll = null;
+  if (dragRaf) {
+    cancelAnimationFrame(dragRaf);
+    dragRaf = 0;
+  }
+}
+
 document.addEventListener("mousedown", (event) => {
   selectionScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
   wholeFileScope = null;
@@ -444,20 +458,26 @@ document.addEventListener("mousemove", (event) => {
 });
 
 // Right-clicking a side-by-side pane selects that whole file (A or B) so the
-// browser's native context menu offers Copy for the entire text.
+// browser's native context menu offers Copy for the entire text. End any
+// in-progress drag first — contextmenu often arrives without a following
+// mouseup on Windows / WebView2.
 document.addEventListener("contextmenu", (event) => {
+  endDragSelecting();
   const scope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
   if (scope) selectAllInScope(scope);
 });
 
 document.addEventListener("mouseup", () => {
-  setDragSelecting(false);
-  dragPanScroll = null;
-  if (dragRaf) {
-    cancelAnimationFrame(dragRaf);
-    dragRaf = 0;
-  }
+  endDragSelecting();
 }, true);
+
+document.addEventListener("pointercancel", () => {
+  endDragSelecting();
+}, true);
+
+window.addEventListener("blur", () => {
+  endDragSelecting();
+});
 
 // Keep any mouse-driven selection inside the A or B region where it began.
 document.addEventListener("selectionchange", () => {
