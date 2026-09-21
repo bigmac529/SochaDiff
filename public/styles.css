@@ -1317,17 +1317,41 @@ body.drag-selecting tr.gap-toggle:not(.gap-armed):hover td {
   color: transparent;
 }
 
-/* A blank/whitespace-only line (or empty insert/delete placeholder) has no
-   visible glyph, so native selection highlighting on it is invisible or only a
-   caret-width streak; tint it explicitly while selected. The tint starts at
-   the content-box left edge (past the 8px padding) so it lines up flush with
-   where text — and its native selection — begins on other lines. */
+/* Blank / whitespace-only / empty-placeholder selection paint: ~one character
+   wide (native caret / single-glyph width), not the full pane. Full-width
+   gradients previously left a dark seam between consecutive blank rows and
+   looked unlike native selection. Keep row min-height for alignment. */
 .text-content.ws-line-selected {
-  background: linear-gradient(to right, transparent 8px, var(--selection-tint) 8px);
+  background: none;
+  position: relative;
+}
+
+/* Pad-only blanks: paint the existing NBSP .sel-pad (measurable ~1ch box). */
+.text-content.ws-line-selected > .sel-pad {
+  display: inline-block;
+  width: 1ch;
+  max-width: 1ch;
+  min-height: 1.5em;
+  vertical-align: top;
+  background: var(--selection-tint);
+  color: transparent;
+}
+
+/* Whitespace-only rows without a .sel-pad: 1ch strip via ::after. */
+.text-content.ws-line-selected:not([data-sel-pad="1"])::after {
+  content: "";
+  position: absolute;
+  left: 8px; /* match .text-content horizontal padding */
+  top: 0;
+  bottom: 0;
+  width: 1ch;
+  max-width: 1ch;
+  background: var(--selection-tint);
+  pointer-events: none;
 }
 
 /* Suppress the caret-width native streak on padded blank/empty rows; the
-   gradient above is the contiguous selection paint. */
+   .sel-pad / ::after strip above is the selection paint. */
 .diff-table .text-content.ws-line-selected::selection,
 .diff-table .text-content.ws-line-selected *::selection {
   background: transparent;

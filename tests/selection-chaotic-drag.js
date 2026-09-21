@@ -223,6 +223,35 @@ async function centerOfRow(page, side, rowIndex, fileName) {
   );
 }
 
+/** Left or right inset of a row's .text-content (for full-line vs partial drags). */
+async function edgeOfRow(page, side, rowIndex, which, fileName) {
+  return page.evaluate(
+    ({ paneSide, idx, edge, file }) => {
+      let root = document;
+      if (file) {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        if (!details) return null;
+        root = details;
+      } else {
+        const open = document.querySelector("details.file-diff[open]") || document.querySelector("details.file-diff");
+        if (open) root = open;
+      }
+      const pane = root.querySelector(
+        paneSide === "right" ? ".right-pane.select-scope" : ".left-pane.select-scope"
+      );
+      const tr = pane && pane.querySelectorAll("tbody > tr")[idx];
+      if (!tr) return null;
+      const tc = tr.querySelector(".text-content") || tr.querySelector("td");
+      const r = (tc || tr).getBoundingClientRect();
+      const x = edge === "end" ? r.left + Math.min(r.width - 4, 120) : r.left + 10;
+      return { x, y: (r.top + r.bottom) / 2 };
+    },
+    { paneSide: side, idx: rowIndex, edge: which, file: fileName || null }
+  );
+}
+
 /** Center of the line-number gutter cell for a row (falls back to sign). */
 async function centerOfGutter(page, side, rowIndex, fileName) {
   return page.evaluate(
@@ -446,11 +475,13 @@ async function main() {
         return;
       }
       await clearNativeSelection(page);
-      const textPt = await centerOfRow(page, "left", firstText, FILE);
+      // Start near the end of the adjacent line so dragging onto the leading gap
+      // covers the whole line (gap arming requires a full-line neighbor).
+      const textPt = await edgeOfRow(page, "left", firstText, "end", FILE);
       const gapPt = await centerOfRow(page, "left", topGap, FILE);
       await chaoticDrag(page, [
         textPt,
-        { x: textPt.x + 6, y: textPt.y },
+        { x: textPt.x - 8, y: textPt.y },
         { x: gapPt.x, y: gapPt.y },
       ]);
       left = await paneSnapshot(page, "left", FILE);
@@ -496,6 +527,74 @@ async function main() {
         "edge gaps stay unarmed without pointer proximity",
         edgeArmed.length === 0,
         `armed=${left.gapArmed}`
+      );
+    });
+
+    await runScenario("partial neighbor does not arm trailing gap", async () => {
+      const botGap = gaps.find((g) => g > lastText);
+      assert("trailing gap present for partial no-arm", botGap != null, `gaps=${gaps}`);
+      if (botGap == null) return;
+      await clearNativeSelection(page);
+      // Select only the first few characters of the last visible line, then move
+      // onto the trailing gap — must NOT arm (neighbor not fully selected).
+      const start = await edgeOfRow(page, "left", lastText, "start", FILE);
+      const gapPt = await centerOfRow(page, "left", botGap, FILE);
+      assert("partial+gap points", !!(start && gapPt), JSON.stringify({ start, gapPt }));
+      if (!start || !gapPt) return;
+      await chaoticDrag(page, [
+        start,
+        { x: start.x + 18, y: start.y },
+        { x: gapPt.x, y: gapPt.y },
+      ]);
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "trailing gap stays unarmed on partial neighbor",
+        !left.gapArmed.includes(botGap),
+        `armed=${left.gapArmed} selected=${JSON.stringify((left.selectedText || "").slice(0, 80))}`
+      );
+    });
+
+    await runScenario("full last line without gap pointer does not arm", async () => {
+      const botGap = gaps.find((g) => g > lastText);
+      assert("trailing gap present for full-line no-arm", botGap != null, `gaps=${gaps}`);
+      if (botGap == null) return;
+      await clearNativeSelection(page);
+      const start = await edgeOfRow(page, "left", lastText, "start", FILE);
+      const end = await edgeOfRow(page, "left", lastText, "end", FILE);
+      assert("full-line points", !!(start && end), JSON.stringify({ start, end }));
+      if (!start || !end) return;
+      // Stay on the text row — never enter the gap hit zone.
+      await chaoticDrag(page, [start, { x: (start.x + end.x) / 2, y: start.y }, end]);
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "trailing gap stays unarmed when pointer never hits it",
+        !left.gapArmed.includes(botGap),
+        `armed=${left.gapArmed} selected=${JSON.stringify((left.selectedText || "").slice(0, 80))}`
+      );
+    });
+
+    await runScenario("full last line plus gap pointer arms trailing gap", async () => {
+      const botGap = gaps.find((g) => g > lastText);
+      assert("trailing gap present for full+pointer arm", botGap != null, `gaps=${gaps}`);
+      if (botGap == null) return;
+      await clearNativeSelection(page);
+      const start = await edgeOfRow(page, "left", lastText, "start", FILE);
+      const end = await edgeOfRow(page, "left", lastText, "end", FILE);
+      const gapPt = await centerOfRow(page, "left", botGap, FILE);
+      assert("full+gap points", !!(start && end && gapPt), JSON.stringify({ start, end, gapPt }));
+      if (!start || !end || !gapPt) return;
+      await chaoticDrag(page, [start, end, { x: gapPt.x, y: gapPt.y }]);
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "trailing gap arms when neighbor fully selected and pointer on gap",
+        left.gapArmed.includes(botGap),
+        `armed=${left.gapArmed} selected=${JSON.stringify((left.selectedText || "").slice(0, 80))}`
+      );
+      const copied = await copySelectionText(page);
+      assert(
+        "full+gap armed copy includes a hidden trailing line",
+        /line 1[4-9]|line 20/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 160))}`
       );
     });
 
@@ -1384,6 +1483,60 @@ async function main() {
       const text = copied || left.selectedText || "";
       assert("blank drag copy includes alpha", /alpha/.test(text), `copy=${JSON.stringify(text.slice(0, 100))}`);
       assert("blank drag copy includes gamma", /gamma/.test(text), `copy=${JSON.stringify(text.slice(0, 100))}`);
+    });
+
+    await runScenario("blank selection paint is narrow not full-width", async () => {
+      await clearNativeSelection(page);
+      left = await paneSnapshot(page, "left", BLANK_FILE);
+      if (!left || !left.blankTextRows.length) {
+        assert("blank rows for narrow paint", false, JSON.stringify(left));
+        return;
+      }
+      const blanks = left.blankTextRows;
+      const startIdx = blanks[0];
+      const endIdx = blanks.length > 1 ? blanks[1] : blanks[0];
+      // Prefer two consecutive blanks when present (seam / width case).
+      let aIdx = startIdx;
+      let bIdx = endIdx;
+      for (let i = 0; i < blanks.length - 1; i++) {
+        if (blanks[i + 1] === blanks[i] + 1) {
+          aIdx = blanks[i];
+          bIdx = blanks[i + 1];
+          break;
+        }
+      }
+      const a = await centerOfRow(page, "left", aIdx, BLANK_FILE);
+      const b = await centerOfRow(page, "left", bIdx, BLANK_FILE);
+      await chaoticDrag(page, [a, { x: a.x + 8, y: (a.y + b.y) / 2 }, b]);
+      const widths = await page.evaluate((file) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        if (!details) return [];
+        const pane = details.querySelector(".left-pane.select-scope");
+        return Array.from(pane.querySelectorAll(".text-content.ws-line-selected")).map((tc) => {
+          const pad = tc.querySelector(".sel-pad");
+          const box = (pad || tc).getBoundingClientRect();
+          return {
+            tcW: Math.round(tc.getBoundingClientRect().width),
+            paintW: Math.round(box.width),
+            hasPad: !!pad,
+          };
+        });
+      }, BLANK_FILE);
+      assert("blank ws-line-selected present for width check", widths.length > 0, JSON.stringify(widths));
+      const narrow = widths.every((w) => w.paintW > 0 && w.paintW < 40);
+      assert(
+        "blank paint width is caret-sized (<40px)",
+        narrow,
+        JSON.stringify(widths)
+      );
+      const notFullPane = widths.every((w) => w.paintW < w.tcW / 4);
+      assert(
+        "blank paint is not full .text-content width",
+        notFullPane,
+        JSON.stringify(widths)
+      );
     });
 
     await runScenario("right-pane-only reverse drag (no left bleed)", async () => {

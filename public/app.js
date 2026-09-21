@@ -774,10 +774,62 @@ function clearSelectionVisuals() {
   document.querySelectorAll(".gap-armed").forEach((el) => el.classList.remove("gap-armed"));
 }
 
+// True when the selection's client rects (or containsNode) overlap a .text-content.
+function selectionOverlapsTextContent(selection, textContent) {
+  if (!selection || !textContent || !selection.rangeCount) return false;
+  if (selection.containsNode(textContent, true)) return true;
+  const rects = Array.from(selection.getRangeAt(0).getClientRects()).filter((r) => r.height > 0);
+  return textContentIntersectsRects(textContent, rects);
+}
+
+// True when every character of .text-content is inside the selection (or the
+// row is blank/pad-only and the selection intersects it). Used to gate gap
+// arming: a collapsed gap may only arm when the adjacent visible text row
+// toward the selection is fully selected — not a mid-line partial.
+function isTextContentFullySelected(selection, textContent) {
+  if (!selection || !textContent || selection.isCollapsed || !selection.rangeCount) return false;
+  const full = lineTextFromContent(textContent);
+  if (full === "") return selectionOverlapsTextContent(selection, textContent);
+  // Entire line element inside the selection (multi-row interior / whole-line range).
+  if (selection.containsNode(textContent, false)) return true;
+  // Selection confined to this line covering all characters.
+  if (isPartialTextContentSelection(selection, textContent)) return false;
+  const anchorEl =
+    selection.anchorNode &&
+    (selection.anchorNode.nodeType === Node.ELEMENT_NODE
+      ? selection.anchorNode
+      : selection.anchorNode.parentElement);
+  const focusEl =
+    selection.focusNode &&
+    (selection.focusNode.nodeType === Node.ELEMENT_NODE
+      ? selection.focusNode
+      : selection.focusNode.parentElement);
+  const confined =
+    anchorEl &&
+    focusEl &&
+    (textContent.contains(anchorEl) || textContent === anchorEl) &&
+    (textContent.contains(focusEl) || textContent === focusEl);
+  if (confined) return selection.toString() === full;
+  // Multi-row edge: fully selected when the range encompasses the whole content.
+  try {
+    const contentRange = document.createRange();
+    contentRange.selectNodeContents(textContent);
+    const selRange = selection.getRangeAt(0);
+    if (!selRange.intersectsNode(textContent)) return false;
+    const startOK = selRange.compareBoundaryPoints(Range.START_TO_START, contentRange) <= 0;
+    const endOK = selRange.compareBoundaryPoints(Range.END_TO_END, contentRange) >= 0;
+    return startOK && endOK;
+  } catch {
+    return false;
+  }
+}
+
 // Arm a collapsed gap only when the pointer is directly over it (same hit
-// target as click-to-expand / hand cursor) AND an adjacent non-gap row with
-// visible text is already in the selected row range. Sticky: once added to
-// proximityGapIndices, stays until the next mousedown clears the set.
+// target as click-to-expand / hand cursor) AND an adjacent non-gap text row is
+// already fully selected (entire .text-content, not a partial mid-line).
+// Sticky: once added to proximityGapIndices, stays until the next mousedown
+// clears the set. Fully selecting the neighbor without the pointer on the gap
+// must not arm it.
 function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   if (!dragSelecting || !selectionScope) return;
   const el = document.elementFromPoint(dragPointer.x, dragPointer.y);
@@ -788,12 +840,15 @@ function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   const gapIdx = rowEls.indexOf(gapTr);
   if (gapIdx === -1) return;
 
-  const adjacentSelectedText = (i) => {
+  const selection = window.getSelection();
+  const adjacentFullySelected = (i) => {
     if (i < selectedFirst || i > selectedLast) return false;
     const tr = rowEls[i];
-    return !!(tr && tr.querySelector(".text-content"));
+    const tc = tr && tr.querySelector(".text-content");
+    if (!tc) return false;
+    return isTextContentFullySelected(selection, tc);
   };
-  if (!adjacentSelectedText(gapIdx - 1) && !adjacentSelectedText(gapIdx + 1)) return;
+  if (!adjacentFullySelected(gapIdx - 1) && !adjacentFullySelected(gapIdx + 1)) return;
 
   proximityGapIndices.add(Number(gapTr.dataset.gapIndex));
 }
@@ -875,10 +930,18 @@ function updateSelectionVisuals() {
   for (let i = firstIdx; i <= lastIdx; i++) {
     const tr = rowEls[i];
     const textContent = tr.querySelector(".text-content");
-    // Include empty placeholders (insert/delete other-side) so the tint stays
-    // contiguous; lineTextFromContent ignores the NBSP selection pad.
+    // Blank / whitespace-only / empty placeholder: paint only when the real
+    // Selection overlaps this .text-content (or the drag span kept the row in
+    // range while Chromium briefly dropped rects). Non-blank rows rely on
+    // native ::selection so partial mid-line selects stay partial; never mark
+    // a whole non-blank line while copy would be partial.
     if (textContent && !lineTextFromContent(textContent).trim()) {
-      textContent.classList.add("ws-line-selected");
+      // Prefer real Selection overlap so paint matches copy. While dragging,
+      // Chromium may briefly drop blank-row rects — keep marks stable for any
+      // blank still inside the resolved span.
+      const overlaps =
+        wholeFile || selectionOverlapsTextContent(selection, textContent) || dragSelecting;
+      if (overlaps) textContent.classList.add("ws-line-selected");
     }
     if (isIncludedGapRow(tr, wholeFile, i, firstIdx, lastIdx)) tr.classList.add("gap-armed");
   }
