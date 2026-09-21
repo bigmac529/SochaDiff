@@ -289,9 +289,12 @@ let dragAnchorRowIndex = -1;
 let wholeFileScope = null;
 // Gap indices (within the current drag's pane) armed by pointer-over-gap
 // proximity (same hit target as click-to-expand / hand cursor), after an
-// adjacent visible text row was already selected. Sticky until next mousedown
-// so Copy still includes them after mouseup. Hidden lines are spliced into
-// the copied text even though they were never rendered/selectable in the DOM.
+// adjacent visible text row was already selected. During dragSelecting the
+// set is live: pruneProximityGapArming drops gaps whose full-neighbor gate
+// fails when the selection retreats. After mouseup, arms that still satisfy
+// the gate stay sticky until the next mousedown so Copy includes them.
+// Hidden lines are spliced into the copied text even though they were never
+// rendered/selectable in the DOM.
 let proximityGapIndices = new Set();
 
 function scopeOf(node) {
@@ -856,9 +859,9 @@ function isTextContentFullySelected(selection, textContent) {
 // Arm a collapsed gap only when the pointer is directly over it (same hit
 // target as click-to-expand / hand cursor) AND every adjacent text row that
 // already lies in the selection range is fully selected (entire .text-content,
-// not a partial mid-line). Sticky: once added to proximityGapIndices, stays
-// until the next mousedown clears the set. Fully selecting the neighbor
-// without the pointer on the gap must not arm it.
+// not a partial mid-line). Newly arming requires pointer-on-gap; disarming
+// does not (see pruneProximityGapArming). Fully selecting the neighbor without
+// the pointer on the gap must not arm it.
 function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   if (!dragSelecting || !selectionScope) return;
   const el = document.elementFromPoint(dragPointer.x, dragPointer.y);
@@ -876,6 +879,50 @@ function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   if (!adjacentSelectionAllowsGap(rowEls, gapIdx, selectedFirst, selectedLast, selection)) return;
 
   proximityGapIndices.add(Number(gapTr.dataset.gapIndex));
+}
+
+// Drop proximity-armed gaps that the current selection no longer justifies.
+// Runs live during dragSelecting (and again after mouseup) so retreating to a
+// mid-line partial immediately disarms — pointer need not stay on the gap.
+// Arms that still pass the full-neighbor gate stay sticky for Copy.
+//
+// Important: do not disarm solely because adjacentSelectionAllowsGap fails.
+// Dragging onto a trailing gap often extends the native selection into the gap
+// label; boundary compares then false-negative "not fully selected" even though
+// the neighbor was fully covered when the gap armed. Only drop when there is no
+// in-range neighbor left, or an in-range neighbor is a clear mid-line partial.
+function pruneProximityGapArming(rowEls, selectedFirst, selectedLast, selection) {
+  if (!proximityGapIndices.size || !rowEls || !selection) return;
+  for (const gapIndex of [...proximityGapIndices]) {
+    const gapTr = rowEls.find((tr) => Number(tr.dataset.gapIndex) === gapIndex);
+    if (!gapTr || gapTr.dataset.expanded === "true") {
+      proximityGapIndices.delete(gapIndex);
+      continue;
+    }
+    const gapIdx = rowEls.indexOf(gapTr);
+    if (gapIdx === -1) {
+      proximityGapIndices.delete(gapIndex);
+      continue;
+    }
+    if (adjacentSelectionAllowsGap(rowEls, gapIdx, selectedFirst, selectedLast, selection)) continue;
+
+    const above = gapIdx - 1;
+    const below = gapIdx + 1;
+    const aboveIn = above >= selectedFirst && above <= selectedLast;
+    const belowIn = below >= selectedFirst && below <= selectedLast;
+    if (!aboveIn && !belowIn) {
+      proximityGapIndices.delete(gapIndex);
+      continue;
+    }
+    const neighborIsPartial = (i) => {
+      const tr = rowEls[i];
+      const tc = tr && tr.querySelector(".text-content");
+      return !!(tc && isPartialTextContentSelection(selection, tc));
+    };
+    if ((aboveIn && neighborIsPartial(above)) || (belowIn && neighborIsPartial(below))) {
+      proximityGapIndices.delete(gapIndex);
+    }
+  }
 }
 
 // The row index nearest the live cursor (dragPointer), clamped into range.
@@ -929,10 +976,13 @@ function updateSelectionVisuals() {
     let [rawFirst, rawLast] = range;
     if (dragSelecting && dragAnchorRowIndex !== -1) {
       // Arm only when the pointer is on a gap with adjacent text already
-      // selected (sticky). Separately clamp visual marking to the drag's real
-      // span (anchor → cursor) so a transient native-selection over-extension
-      // can't highlight rows the drag never reached.
+      // selected. Prune arms whose full-neighbor gate fails as the selection
+      // retreats (live during drag — pointer need not stay on the gap).
+      // Separately clamp visual marking to the drag's real span (anchor →
+      // cursor) so a transient native-selection over-extension can't highlight
+      // rows the drag never reached.
       maybeArmGapUnderPointer(rowEls, rawFirst, rawLast);
+      pruneProximityGapArming(rowEls, rawFirst, rawLast, selection);
       const cursorRow = cursorRowFromPointer(rowEls);
       const spanLo = Math.min(dragAnchorRowIndex, cursorRow);
       const spanHi = Math.max(dragAnchorRowIndex, cursorRow);
@@ -943,10 +993,14 @@ function updateSelectionVisuals() {
         rowEls.forEach((tr) => { if (isArmedGapRow(tr, false)) tr.classList.add("gap-armed"); });
         return;
       }
+      // Re-prune against the clamped span so a retreated cursor drops arms
+      // whose neighbor fell outside the real drag range.
+      pruneProximityGapArming(rowEls, rawFirst, rawLast, selection);
       [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, rawFirst, rawLast, false);
     } else {
-      // Do not clear proximityGapIndices here — arming stays sticky until the
-      // next mousedown so Copy still includes armed gaps after mouseup.
+      // Sticky until mousedown for Copy, but drop arms that no longer satisfy
+      // the full-neighbor gate (orphans from a retreated drag before mouseup).
+      pruneProximityGapArming(rowEls, rawFirst, rawLast, selection);
       [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, rawFirst, rawLast, false);
     }
   }

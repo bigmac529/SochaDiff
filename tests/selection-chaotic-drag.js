@@ -647,6 +647,125 @@ async function main() {
       );
     });
 
+    await runScenario("top-down retreat mid-line disarms trailing gap", async () => {
+      const botGap = gaps.find((g) => g > lastText);
+      assert("trailing gap present for top-down disarm", botGap != null, `gaps=${gaps}`);
+      if (botGap == null) return;
+      await clearNativeSelection(page);
+      // Full line above the trailing gap → onto gap (arms) → back mid-line on
+      // that above line must disarm live (and stay unarmed after mouseup).
+      const start = await edgeOfRow(page, "left", lastText, "start", FILE);
+      const end = await edgeOfRow(page, "left", lastText, "end", FILE);
+      const gapPt = await centerOfRow(page, "left", botGap, FILE);
+      // Slightly past the start edge — only a few chars selected when focus returns here.
+      const partial = start && { x: start.x + 16, y: start.y };
+      assert(
+        "top-down disarm points",
+        !!(start && end && partial && gapPt),
+        JSON.stringify({ start, end, partial, gapPt })
+      );
+      if (!start || !end || !partial || !gapPt) return;
+
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 8 });
+      await sleep(16);
+      await page.mouse.move(gapPt.x, gapPt.y, { steps: 8 });
+      await sleep(30);
+      let snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "top-down: gap arms when pointer on gap with full above neighbor",
+        snap.gapArmed.includes(botGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+
+      // Retreat to a partial mid-line on the above neighbor — gate fails.
+      await page.mouse.move(partial.x, partial.y, { steps: 10 });
+      await sleep(40);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "top-down: gap disarms when selection retreats mid-line",
+        !snap.gapArmed.includes(botGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+
+      await page.mouse.up();
+      await sleep(100);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "top-down: gap stays unarmed after mouseup (no orphan sticky arm)",
+        !snap.gapArmed.includes(botGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+      const copied = await copySelectionText(page);
+      assert(
+        "top-down retreat copy excludes hidden trailing lines",
+        !/line 1[4-9]|line 20/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 160))}`
+      );
+    });
+
+    await runScenario("bottom-up retreat mid-line disarms leading gap", async () => {
+      if (topGap == null) {
+        assert("top gap present for bottom-up disarm", false, "no top gap");
+        return;
+      }
+      await clearNativeSelection(page);
+      // Full line below the leading gap → onto gap (arms) → back mid-line on
+      // that below line must disarm live (and stay unarmed after mouseup).
+      // RTL (end→start) then up onto the gap — same path as the arm scenario;
+      // LTR then-up onto user-select:none often collapses native selection.
+      const start = await edgeOfRow(page, "left", firstText, "start", FILE);
+      const end = await edgeOfRow(page, "left", firstText, "end", FILE);
+      const gapPt = await centerOfRow(page, "left", topGap, FILE);
+      // Slightly before the end edge — only a suffix selected when focus returns here
+      // (anchor stayed at end from the RTL full-line pass).
+      const partial = end && { x: end.x - 16, y: end.y };
+      assert(
+        "bottom-up disarm points",
+        !!(start && end && partial && gapPt),
+        JSON.stringify({ start, end, partial, gapPt })
+      );
+      if (!start || !end || !partial || !gapPt) return;
+
+      await page.mouse.move(end.x, end.y);
+      await page.mouse.down();
+      await page.mouse.move(start.x, start.y, { steps: 8 });
+      await sleep(16);
+      await page.mouse.move(gapPt.x, gapPt.y, { steps: 8 });
+      await sleep(30);
+      let snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "bottom-up: gap arms when pointer on gap with full below neighbor",
+        snap.gapArmed.includes(topGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+
+      await page.mouse.move(partial.x, partial.y, { steps: 10 });
+      await sleep(40);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "bottom-up: gap disarms when selection retreats mid-line",
+        !snap.gapArmed.includes(topGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+
+      await page.mouse.up();
+      await sleep(100);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "bottom-up: gap stays unarmed after mouseup (no orphan sticky arm)",
+        !snap.gapArmed.includes(topGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+      const copied = await copySelectionText(page);
+      assert(
+        "bottom-up retreat copy excludes hidden line 1",
+        !/line 1/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 120))}`
+      );
+    });
+
     await runScenario("weave toward opposite pane still clamps to start pane", async () => {
       await clearNativeSelection(page);
       const leftStart = await centerOfRow(page, "left", firstText, FILE);
