@@ -598,6 +598,55 @@ async function main() {
       );
     });
 
+    await runScenario("bottom-up partial below does not arm leading gap", async () => {
+      if (topGap == null) {
+        assert("top gap present for bottom-up partial", false, "no top gap");
+        return;
+      }
+      await clearNativeSelection(page);
+      // Start mid-line on the text row immediately below the leading gap, then
+      // drag upward onto the gap — neighbor is only partially selected, so the
+      // gap must not arm (bottom-up full-line gate).
+      const mid = await centerOfRow(page, "left", firstText, FILE);
+      const gapPt = await centerOfRow(page, "left", topGap, FILE);
+      assert("bottom-up partial points", !!(mid && gapPt), JSON.stringify({ mid, gapPt }));
+      if (!mid || !gapPt) return;
+      await chaoticDrag(page, [
+        mid,
+        { x: mid.x - 6, y: mid.y },
+        { x: gapPt.x, y: gapPt.y },
+      ]);
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "leading gap stays unarmed on bottom-up partial neighbor",
+        !left.gapArmed.includes(topGap),
+        `armed=${left.gapArmed} selected=${JSON.stringify((left.selectedText || "").slice(0, 80))}`
+      );
+    });
+
+    await runScenario("bottom-up full below plus gap pointer arms leading gap", async () => {
+      if (topGap == null) {
+        assert("top gap present for bottom-up full arm", false, "no top gap");
+        return;
+      }
+      await clearNativeSelection(page);
+      // Select the below neighbor right-to-left (end→start) so the line is fully
+      // covered, then drag upward onto the leading gap. LTR then-up onto a
+      // user-select:none gap often collapses the native selection in Chromium.
+      const start = await edgeOfRow(page, "left", firstText, "start", FILE);
+      const end = await edgeOfRow(page, "left", firstText, "end", FILE);
+      const gapPt = await centerOfRow(page, "left", topGap, FILE);
+      assert("bottom-up full+gap points", !!(start && end && gapPt), JSON.stringify({ start, end, gapPt }));
+      if (!start || !end || !gapPt) return;
+      await chaoticDrag(page, [end, start, { x: gapPt.x, y: gapPt.y }]);
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "leading gap arms when below neighbor fully selected and pointer on gap",
+        left.gapArmed.includes(topGap),
+        `armed=${left.gapArmed} selected=${JSON.stringify((left.selectedText || "").slice(0, 80))}`
+      );
+    });
+
     await runScenario("weave toward opposite pane still clamps to start pane", async () => {
       await clearNativeSelection(page);
       const leftStart = await centerOfRow(page, "left", firstText, FILE);
@@ -1440,6 +1489,75 @@ async function main() {
       await clearNativeSelection(page);
     });
 
+
+    // ── sel-a / sel-b span.txt: interior gap full-line gate (bottom-up) ──
+    const SPAN_FILE = "span.txt";
+    await openCompare(page, baseUrl, SEL_A, SEL_B, SPAN_FILE);
+    {
+      const spanLeft = await paneSnapshot(page, "left", SPAN_FILE);
+      assert("span fixture present", !!(spanLeft && spanLeft.rowCount > 0), JSON.stringify(spanLeft));
+      const spanGaps = (spanLeft && spanLeft.gapIndices) || [];
+      const spanText = (spanLeft && spanLeft.textRowIndices) || [];
+      // Interior collapsed gap: has text-row neighbors both above and below.
+      const interiorGap = spanGaps.find(
+        (g) => spanText.some((t) => t < g) && spanText.some((t) => t > g)
+      );
+      assert("span fixture exposes interior gap", interiorGap != null, `gaps=${spanGaps} text=${spanText}`);
+
+      await runScenario("bottom-up span partial below does not arm interior gap", async () => {
+        if (interiorGap == null) return;
+        const below = spanText.find((t) => t > interiorGap);
+        const above = [...spanText].reverse().find((t) => t < interiorGap);
+        assert("interior neighbors", below != null && above != null, JSON.stringify({ above, below, interiorGap }));
+        if (below == null || above == null) return;
+        await clearNativeSelection(page);
+        // Partial mid-line on the row below the interior gap, then extend upward
+        // through the gap onto the row above — gap must stay unarmed until the
+        // below neighbor is fully selected.
+        const midBelow = await centerOfRow(page, "left", below, SPAN_FILE);
+        const abovePt = await centerOfRow(page, "left", above, SPAN_FILE);
+        assert("span partial points", !!(midBelow && abovePt), JSON.stringify({ midBelow, abovePt }));
+        if (!midBelow || !abovePt) return;
+        await chaoticDrag(page, [
+          midBelow,
+          { x: midBelow.x - 4, y: midBelow.y },
+          { x: midBelow.x, y: (midBelow.y + abovePt.y) / 2 },
+          abovePt,
+        ]);
+        const snap = await paneSnapshot(page, "left", SPAN_FILE);
+        assert(
+          "interior gap stays unarmed on bottom-up partial below",
+          !snap.gapArmed.includes(interiorGap),
+          `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 100))}`
+        );
+      });
+
+      await runScenario("bottom-up span full neighbors may include interior gap", async () => {
+        if (interiorGap == null) return;
+        const below = spanText.find((t) => t > interiorGap);
+        const above = [...spanText].reverse().find((t) => t < interiorGap);
+        assert("interior neighbors for full span", below != null && above != null, JSON.stringify({ above, below }));
+        if (below == null || above == null) return;
+        await clearNativeSelection(page);
+        // Gutter drag from the below neighbor up through the gap onto the above
+        // neighbor selects whole lines on both sides — interior gap may arm/include.
+        const gBelow = await centerOfGutter(page, "left", below, SPAN_FILE);
+        const gAbove = await centerOfGutter(page, "left", above, SPAN_FILE);
+        assert("span gutter points", !!(gBelow && gAbove), JSON.stringify({ gBelow, gAbove }));
+        if (!gBelow || !gAbove) return;
+        await chaoticDrag(page, [
+          gBelow,
+          { x: gBelow.x, y: (gBelow.y + gAbove.y) / 2 },
+          gAbove,
+        ]);
+        const snap = await paneSnapshot(page, "left", SPAN_FILE);
+        assert(
+          "interior gap included when both neighbors fully selected",
+          snap.gapArmed.includes(interiorGap),
+          `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 120))}`
+        );
+      });
+    }
 
     // ── blank-a / blank-b: blank-row marks ───────────────────────────────
     const BLANK_FILE = "lines.txt";

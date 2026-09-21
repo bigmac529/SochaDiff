@@ -744,17 +744,46 @@ function isArmedGapRow(tr, treatAllAsArmed) {
   return treatAllAsArmed || proximityGapIndices.has(Number(tr.dataset.gapIndex));
 }
 
+// True when every adjacent text-row neighbor that lies inside [firstIdx, lastIdx]
+// is fully selected, and at least one such neighbor exists. Gates both proximity
+// arming and spanned inclusion: a partial mid-line select on either side must
+// not pull in the collapsed gap (bottom-up and top-down).
+function adjacentSelectionAllowsGap(rowEls, gapIdx, firstIdx, lastIdx, selection) {
+  if (!rowEls || !selection || gapIdx < 0) return false;
+  const above = gapIdx - 1;
+  const below = gapIdx + 1;
+  const aboveIn = above >= firstIdx && above <= lastIdx;
+  const belowIn = below >= firstIdx && below <= lastIdx;
+  if (!aboveIn && !belowIn) return false;
+
+  const neighborFullySelected = (i) => {
+    const tr = rowEls[i];
+    const tc = tr && tr.querySelector(".text-content");
+    if (!tc) return false;
+    return isTextContentFullySelected(selection, tc);
+  };
+  if (aboveIn && !neighborFullySelected(above)) return false;
+  if (belowIn && !neighborFullySelected(below)) return false;
+  return true;
+}
+
 // Collapsed gap strictly between the selected text-row bounds — the selection
-// spans it even if the pointer never armed it. Hidden gap.rows must copy.
-function isSpannedGapRow(tr, index, firstIdx, lastIdx) {
+// spans it even if the pointer never armed it. Hidden gap.rows must copy, but
+// only when every in-range adjacent text neighbor is fully selected (same gate
+// as proximity arming).
+function isSpannedGapRow(tr, index, firstIdx, lastIdx, rowEls, selection) {
   if (!tr.classList.contains("gap-toggle") || tr.dataset.expanded === "true") return false;
-  return index > firstIdx && index < lastIdx;
+  if (!(index > firstIdx && index < lastIdx)) return false;
+  return adjacentSelectionAllowsGap(rowEls, index, firstIdx, lastIdx, selection);
 }
 
 // Gap contributes hidden lines on copy / gap-armed visuals when whole-pane,
-// proximity-armed, or spanned by the current row range.
-function isIncludedGapRow(tr, treatAllAsArmed, index, firstIdx, lastIdx) {
-  return isArmedGapRow(tr, treatAllAsArmed) || isSpannedGapRow(tr, index, firstIdx, lastIdx);
+// proximity-armed, or spanned by the current row range (with full-line gate).
+function isIncludedGapRow(tr, treatAllAsArmed, index, firstIdx, lastIdx, rowEls, selection) {
+  return (
+    isArmedGapRow(tr, treatAllAsArmed) ||
+    isSpannedGapRow(tr, index, firstIdx, lastIdx, rowEls, selection)
+  );
 }
 
 // Gap rows are unselectable (see tr.gap td { user-select: none }), so the
@@ -825,11 +854,11 @@ function isTextContentFullySelected(selection, textContent) {
 }
 
 // Arm a collapsed gap only when the pointer is directly over it (same hit
-// target as click-to-expand / hand cursor) AND an adjacent non-gap text row is
-// already fully selected (entire .text-content, not a partial mid-line).
-// Sticky: once added to proximityGapIndices, stays until the next mousedown
-// clears the set. Fully selecting the neighbor without the pointer on the gap
-// must not arm it.
+// target as click-to-expand / hand cursor) AND every adjacent text row that
+// already lies in the selection range is fully selected (entire .text-content,
+// not a partial mid-line). Sticky: once added to proximityGapIndices, stays
+// until the next mousedown clears the set. Fully selecting the neighbor
+// without the pointer on the gap must not arm it.
 function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   if (!dragSelecting || !selectionScope) return;
   const el = document.elementFromPoint(dragPointer.x, dragPointer.y);
@@ -841,14 +870,10 @@ function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   if (gapIdx === -1) return;
 
   const selection = window.getSelection();
-  const adjacentFullySelected = (i) => {
-    if (i < selectedFirst || i > selectedLast) return false;
-    const tr = rowEls[i];
-    const tc = tr && tr.querySelector(".text-content");
-    if (!tc) return false;
-    return isTextContentFullySelected(selection, tc);
-  };
-  if (!adjacentFullySelected(gapIdx - 1) && !adjacentFullySelected(gapIdx + 1)) return;
+  // Require every in-range adjacent text neighbor to be fully selected — not
+  // OR either side. Bottom-up extends can fully select the above row while the
+  // below (start) line is still only partial; OR would wrongly arm the gap.
+  if (!adjacentSelectionAllowsGap(rowEls, gapIdx, selectedFirst, selectedLast, selection)) return;
 
   proximityGapIndices.add(Number(gapTr.dataset.gapIndex));
 }
@@ -943,7 +968,7 @@ function updateSelectionVisuals() {
         wholeFile || selectionOverlapsTextContent(selection, textContent) || dragSelecting;
       if (overlaps) textContent.classList.add("ws-line-selected");
     }
-    if (isIncludedGapRow(tr, wholeFile, i, firstIdx, lastIdx)) tr.classList.add("gap-armed");
+    if (isIncludedGapRow(tr, wholeFile, i, firstIdx, lastIdx, rowEls, selection)) tr.classList.add("gap-armed");
   }
 }
 
@@ -1113,7 +1138,7 @@ function copyDiffSelection(event, scroll, file) {
         const textContent = tr.querySelector(".text-content");
         if (textContent) {
           parts.push(lineTextFromContent(textContent) + eolString(tr.dataset.ending));
-        } else if (isIncludedGapRow(tr, false, i, firstIdx, lastIdx)) {
+        } else if (isIncludedGapRow(tr, false, i, firstIdx, lastIdx, rowEls, selection)) {
           const hidden = gapHiddenText(file, Number(tr.dataset.gapIndex), side);
           if (hidden) parts.push(hidden);
         }
