@@ -290,12 +290,16 @@ let wholeFileScope = null;
 // Gap indices (within the current drag's pane) armed by pointer-over-gap
 // proximity (same hit target as click-to-expand / hand cursor), after an
 // adjacent visible text row was already selected. During dragSelecting the
-// set is live: pruneProximityGapArming drops gaps whose full-neighbor gate
-// fails when the selection retreats. After mouseup, arms that still satisfy
-// the gate stay sticky until the next mousedown so Copy includes them.
-// Hidden lines are spliced into the copied text even though they were never
-// rendered/selectable in the DOM.
+// set is live: clampSelectionToArmedGapNeighbors keeps gating neighbors
+// fully selected while a gap stays armed, then pruneProximityGapArming
+// hard-drops any arm whose full-neighbor gate still fails. After mouseup,
+// arms that still satisfy the gate stay sticky until the next mousedown so
+// Copy includes them. Hidden lines are spliced into the copied text even
+// though they were never rendered/selectable in the DOM.
 let proximityGapIndices = new Set();
+// Re-entrancy guard: clamp/prune may rewrite the Selection, which synchronously
+// re-fires selectionchange → updateSelectionVisuals.
+let updatingSelectionVisuals = false;
 
 function scopeOf(node) {
   const element = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
@@ -782,11 +786,13 @@ function isSpannedGapRow(tr, index, firstIdx, lastIdx, rowEls, selection) {
 
 // Gap contributes hidden lines on copy / gap-armed visuals when whole-pane,
 // proximity-armed, or spanned by the current row range (with full-line gate).
+// Proximity-armed gaps still require the full-neighbor gate so paint/copy never
+// show .gap-armed beside a partial neighbor (defense in depth with prune).
 function isIncludedGapRow(tr, treatAllAsArmed, index, firstIdx, lastIdx, rowEls, selection) {
-  return (
-    isArmedGapRow(tr, treatAllAsArmed) ||
-    isSpannedGapRow(tr, index, firstIdx, lastIdx, rowEls, selection)
-  );
+  if (isSpannedGapRow(tr, index, firstIdx, lastIdx, rowEls, selection)) return true;
+  if (!isArmedGapRow(tr, treatAllAsArmed)) return false;
+  if (treatAllAsArmed) return true;
+  return adjacentSelectionAllowsGap(rowEls, index, firstIdx, lastIdx, selection);
 }
 
 // Gap rows are unselectable (see tr.gap td { user-select: none }), so the
@@ -814,43 +820,74 @@ function selectionOverlapsTextContent(selection, textContent) {
   return textContentIntersectsRects(textContent, rects);
 }
 
+// Character offset of (node, offset) within textContent's concatenated text,
+// or 0 / length when the point lies entirely before / after the content.
+// Used by isTextContentFullySelected: Chromium's containsNode(text, false) and
+// compareBoundaryPoints both mis-report mid-node / (text,0) vs (el,0) cases
+// when the selection extends into gap chrome.
+function textOffsetInContent(textContent, node, offset) {
+  if (!textContent || !node) return -1;
+  const fullLen = () => lineTextFromContent(textContent).length;
+  if (node === textContent) {
+    let chars = 0;
+    const kids = textContent.childNodes;
+    for (let i = 0; i < offset && i < kids.length; i++) {
+      chars += (kids[i].textContent || "").length;
+    }
+    return chars;
+  }
+  if (textContent.contains(node)) {
+    let chars = 0;
+    const walker = document.createTreeWalker(textContent, NodeFilter.SHOW_TEXT);
+    let n = walker.nextNode();
+    while (n) {
+      if (n === node) return chars + offset;
+      chars += n.textContent.length;
+      n = walker.nextNode();
+    }
+    return chars;
+  }
+  // Ancestor of textContent (e.g. selection focus parked on the pane after
+  // dragging into user-select:none gap chrome): map child index to before/after.
+  if (node.nodeType === Node.ELEMENT_NODE && node.contains(textContent)) {
+    let child = textContent;
+    while (child.parentNode && child.parentNode !== node) child = child.parentNode;
+    if (child.parentNode === node) {
+      const childIndex = Array.prototype.indexOf.call(node.childNodes, child);
+      // offset <= childIndex → at/before tc; offset > childIndex → after tc.
+      return offset <= childIndex ? 0 : fullLen();
+    }
+  }
+  // Outside sibling/elsewhere: before → 0; after → full length.
+  const pos = node.compareDocumentPosition(textContent);
+  if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return 0;
+  if (pos & Node.DOCUMENT_POSITION_PRECEDING) return fullLen();
+  return -1;
+}
+
 // True when every character of .text-content is inside the selection (or the
 // row is blank/pad-only and the selection intersects it). Used to gate gap
 // arming: a collapsed gap may only arm when the adjacent visible text row
 // toward the selection is fully selected — not a mid-line partial.
+// Prefer character-offset coverage (reliable across gap-adjacent extends and
+// mid-line partials). Treat isPartialTextContentSelection as definite not-full.
+// Avoid brittle selection.toString() equality and Chromium containsNode /
+// compareBoundaryPoints false positives/negatives around gap chrome.
 function isTextContentFullySelected(selection, textContent) {
   if (!selection || !textContent || selection.isCollapsed || !selection.rangeCount) return false;
   const full = lineTextFromContent(textContent);
   if (full === "") return selectionOverlapsTextContent(selection, textContent);
+  // Definite not-full: selection confined to this line but missing characters.
+  if (isPartialTextContentSelection(selection, textContent)) return false;
   // Entire line element inside the selection (multi-row interior / whole-line range).
   if (selection.containsNode(textContent, false)) return true;
-  // Selection confined to this line covering all characters.
-  if (isPartialTextContentSelection(selection, textContent)) return false;
-  const anchorEl =
-    selection.anchorNode &&
-    (selection.anchorNode.nodeType === Node.ELEMENT_NODE
-      ? selection.anchorNode
-      : selection.anchorNode.parentElement);
-  const focusEl =
-    selection.focusNode &&
-    (selection.focusNode.nodeType === Node.ELEMENT_NODE
-      ? selection.focusNode
-      : selection.focusNode.parentElement);
-  const confined =
-    anchorEl &&
-    focusEl &&
-    (textContent.contains(anchorEl) || textContent === anchorEl) &&
-    (textContent.contains(focusEl) || textContent === focusEl);
-  if (confined) return selection.toString() === full;
-  // Multi-row edge: fully selected when the range encompasses the whole content.
   try {
-    const contentRange = document.createRange();
-    contentRange.selectNodeContents(textContent);
     const selRange = selection.getRangeAt(0);
     if (!selRange.intersectsNode(textContent)) return false;
-    const startOK = selRange.compareBoundaryPoints(Range.START_TO_START, contentRange) <= 0;
-    const endOK = selRange.compareBoundaryPoints(Range.END_TO_END, contentRange) >= 0;
-    return startOK && endOK;
+    const startOff = textOffsetInContent(textContent, selRange.startContainer, selRange.startOffset);
+    const endOff = textOffsetInContent(textContent, selRange.endContainer, selRange.endOffset);
+    if (startOff < 0 || endOff < 0) return false;
+    return startOff === 0 && endOff >= full.length;
   } catch {
     return false;
   }
@@ -881,16 +918,66 @@ function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   proximityGapIndices.add(Number(gapTr.dataset.gapIndex));
 }
 
+// While a proximity gap stays armed, keep every in-range gating neighbor's
+// .text-content fully selected (gap armed ⇒ full neighbor). If focus/anchor
+// retreats inside that neighbor (e.g. peels trailing "16"), extend the range
+// to cover selectNodeContents. If the user retreats off the neighbor entirely
+// (neighbor leaves the selected row range), leave it alone — hard prune drops
+// the arm next. Call before pruneProximityGapArming.
+function clampSelectionToArmedGapNeighbors(rowEls, selectedFirst, selectedLast, selection) {
+  if (!proximityGapIndices.size || !rowEls || !selection || !selection.rangeCount) return;
+  let changed = false;
+  for (const gapIndex of [...proximityGapIndices]) {
+    const gapTr = rowEls.find((tr) => Number(tr.dataset.gapIndex) === gapIndex);
+    if (!gapTr || gapTr.dataset.expanded === "true") continue;
+    const gapIdx = rowEls.indexOf(gapTr);
+    if (gapIdx === -1) continue;
+
+    const neighborIdxs = [];
+    const above = gapIdx - 1;
+    const below = gapIdx + 1;
+    if (above >= selectedFirst && above <= selectedLast) neighborIdxs.push(above);
+    if (below >= selectedFirst && below <= selectedLast) neighborIdxs.push(below);
+
+    for (const i of neighborIdxs) {
+      const tc = rowEls[i] && rowEls[i].querySelector(".text-content");
+      if (!tc || lineTextFromContent(tc) === "") continue;
+      if (isTextContentFullySelected(selection, tc)) continue;
+      // Still overlapping / in-range but not full — re-extend to the whole line
+      // so a peeled suffix cannot coexist with an armed gap.
+      if (!selectionOverlapsTextContent(selection, tc) && !isPartialTextContentSelection(selection, tc)) {
+        continue;
+      }
+      try {
+        const contentRange = document.createRange();
+        contentRange.selectNodeContents(tc);
+        const selRange = selection.getRangeAt(0);
+        const next = selRange.cloneRange();
+        if (next.compareBoundaryPoints(Range.START_TO_START, contentRange) > 0) {
+          next.setStart(contentRange.startContainer, contentRange.startOffset);
+        }
+        if (next.compareBoundaryPoints(Range.END_TO_END, contentRange) < 0) {
+          next.setEnd(contentRange.endContainer, contentRange.endOffset);
+        }
+        constrainingSelection = true;
+        selection.removeAllRanges();
+        selection.addRange(next);
+        constrainingSelection = false;
+        changed = true;
+      } catch {
+        /* ignore range errors on detached nodes */
+      }
+    }
+  }
+  return changed;
+}
+
 // Drop proximity-armed gaps that the current selection no longer justifies.
-// Runs live during dragSelecting (and again after mouseup) so retreating to a
-// mid-line partial immediately disarms — pointer need not stay on the gap.
-// Arms that still pass the full-neighbor gate stay sticky for Copy.
-//
-// Important: do not disarm solely because adjacentSelectionAllowsGap fails.
-// Dragging onto a trailing gap often extends the native selection into the gap
-// label; boundary compares then false-negative "not fully selected" even though
-// the neighbor was fully covered when the gap armed. Only drop when there is no
-// in-range neighbor left, or an in-range neighbor is a clear mid-line partial.
+// Hard prune: any arm whose adjacentSelectionAllowsGap gate fails is dropped
+// immediately (during drag and on mouseup). No soft exception for Chromium
+// gap-label false-negatives — those are handled by boundary-compare full-line
+// checks and clampSelectionToArmedGapNeighbors (which restores a full neighbor
+// before this runs). Pointer need not stay on the gap to disarm.
 function pruneProximityGapArming(rowEls, selectedFirst, selectedLast, selection) {
   if (!proximityGapIndices.size || !rowEls || !selection) return;
   for (const gapIndex of [...proximityGapIndices]) {
@@ -904,22 +991,7 @@ function pruneProximityGapArming(rowEls, selectedFirst, selectedLast, selection)
       proximityGapIndices.delete(gapIndex);
       continue;
     }
-    if (adjacentSelectionAllowsGap(rowEls, gapIdx, selectedFirst, selectedLast, selection)) continue;
-
-    const above = gapIdx - 1;
-    const below = gapIdx + 1;
-    const aboveIn = above >= selectedFirst && above <= selectedLast;
-    const belowIn = below >= selectedFirst && below <= selectedLast;
-    if (!aboveIn && !belowIn) {
-      proximityGapIndices.delete(gapIndex);
-      continue;
-    }
-    const neighborIsPartial = (i) => {
-      const tr = rowEls[i];
-      const tc = tr && tr.querySelector(".text-content");
-      return !!(tc && isPartialTextContentSelection(selection, tc));
-    };
-    if ((aboveIn && neighborIsPartial(above)) || (belowIn && neighborIsPartial(below))) {
+    if (!adjacentSelectionAllowsGap(rowEls, gapIdx, selectedFirst, selectedLast, selection)) {
       proximityGapIndices.delete(gapIndex);
     }
   }
@@ -942,6 +1014,9 @@ function cursorRowFromPointer(rowEls) {
 // native selection highlighting is invisible or caret-width on empty content,
 // and gives no cue that a collapsed gap will be copied too.
 function updateSelectionVisuals() {
+  if (updatingSelectionVisuals) return;
+  updatingSelectionVisuals = true;
+  try {
   if (!selectionScope) {
     clearSelectionVisuals();
     return;
@@ -976,12 +1051,16 @@ function updateSelectionVisuals() {
     let [rawFirst, rawLast] = range;
     if (dragSelecting && dragAnchorRowIndex !== -1) {
       // Arm only when the pointer is on a gap with adjacent text already
-      // selected. Prune arms whose full-neighbor gate fails as the selection
-      // retreats (live during drag — pointer need not stay on the gap).
-      // Separately clamp visual marking to the drag's real span (anchor →
-      // cursor) so a transient native-selection over-extension can't highlight
-      // rows the drag never reached.
+      // selected. While armed, clamp peels back onto a full neighbor; then
+      // hard-prune any arm whose full-neighbor gate still fails (live during
+      // drag — pointer need not stay on the gap). Separately clamp visual
+      // marking to the drag's real span (anchor → cursor) so a transient
+      // native-selection over-extension can't highlight rows the drag never
+      // reached.
       maybeArmGapUnderPointer(rowEls, rawFirst, rawLast);
+      clampSelectionToArmedGapNeighbors(rowEls, rawFirst, rawLast, selection);
+      let liveRange = selectedRowRange(rowEls, selection);
+      if (liveRange) [rawFirst, rawLast] = liveRange;
       pruneProximityGapArming(rowEls, rawFirst, rawLast, selection);
       const cursorRow = cursorRowFromPointer(rowEls);
       const spanLo = Math.min(dragAnchorRowIndex, cursorRow);
@@ -989,17 +1068,34 @@ function updateSelectionVisuals() {
       rawFirst = Math.max(rawFirst, spanLo);
       rawLast = Math.min(rawLast, spanHi);
       if (rawFirst > rawLast) {
+        // Cursor left every selected text row — disarm; never paint .gap-armed
+        // without a fully selected neighbor.
+        proximityGapIndices.clear();
         clearSelectionVisuals();
-        rowEls.forEach((tr) => { if (isArmedGapRow(tr, false)) tr.classList.add("gap-armed"); });
         return;
       }
-      // Re-prune against the clamped span so a retreated cursor drops arms
-      // whose neighbor fell outside the real drag range.
+      // Re-clamp/prune against the visual span so a retreated cursor drops
+      // arms whose neighbor fell outside the real drag range.
+      clampSelectionToArmedGapNeighbors(rowEls, rawFirst, rawLast, selection);
+      liveRange = selectedRowRange(rowEls, selection);
+      if (liveRange) {
+        rawFirst = Math.max(liveRange[0], spanLo);
+        rawLast = Math.min(liveRange[1], spanHi);
+        if (rawFirst > rawLast) {
+          proximityGapIndices.clear();
+          clearSelectionVisuals();
+          return;
+        }
+      }
       pruneProximityGapArming(rowEls, rawFirst, rawLast, selection);
       [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, rawFirst, rawLast, false);
     } else {
-      // Sticky until mousedown for Copy, but drop arms that no longer satisfy
-      // the full-neighbor gate (orphans from a retreated drag before mouseup).
+      // Sticky until mousedown for Copy, but clamp then hard-drop arms that
+      // no longer satisfy the full-neighbor gate (orphans from a retreated
+      // drag before mouseup).
+      clampSelectionToArmedGapNeighbors(rowEls, rawFirst, rawLast, selection);
+      const liveRange = selectedRowRange(rowEls, selection);
+      if (liveRange) [rawFirst, rawLast] = liveRange;
       pruneProximityGapArming(rowEls, rawFirst, rawLast, selection);
       [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, rawFirst, rawLast, false);
     }
@@ -1023,6 +1119,9 @@ function updateSelectionVisuals() {
       if (overlaps) textContent.classList.add("ws-line-selected");
     }
     if (isIncludedGapRow(tr, wholeFile, i, firstIdx, lastIdx, rowEls, selection)) tr.classList.add("gap-armed");
+  }
+  } finally {
+    updatingSelectionVisuals = false;
   }
 }
 
