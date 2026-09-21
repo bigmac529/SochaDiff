@@ -438,6 +438,26 @@ function isGutterCell(target) {
   return !!(cell && !cell.closest("tr.gap-toggle"));
 }
 
+// Collapsed gap row under the pointer (click-to-expand target). Expanded gap
+// markers stay clickable to collapse and are not selection-extend targets.
+function isCollapsedGapToggle(target) {
+  if (!(target instanceof Element)) return false;
+  const tr = target.closest("tr.gap-toggle");
+  return !!(tr && tr.dataset.expanded !== "true");
+}
+
+// Nearest .text-content row adjacent to a gap row index, preferring the side
+// toward fromIdx when both neighbors exist.
+function adjacentTextRowIndex(rowEls, gapIdx, fromIdx) {
+  const before = gapIdx > 0 && rowEls[gapIdx - 1].querySelector(".text-content") ? gapIdx - 1 : -1;
+  const after =
+    gapIdx < rowEls.length - 1 && rowEls[gapIdx + 1].querySelector(".text-content") ? gapIdx + 1 : -1;
+  if (before === -1) return after;
+  if (after === -1) return before;
+  if (fromIdx === -1) return before;
+  return Math.abs(before - fromIdx) <= Math.abs(after - fromIdx) ? before : after;
+}
+
 // Build a DOM selection covering every .text-content from fromIdx..toIdx
 // (gap rows in between have no text node and are skipped for the range ends;
 // copy / gap-arming still pull them in via isIncludedGapRow).
@@ -516,12 +536,52 @@ document.addEventListener("mousedown", (event) => {
     return;
   }
 
+  // Shift+click a collapsed gap: extend/arm like a drag onto the gap, and do
+  // not toggle expand (click handler also ignores shiftKey).
+  if (isCollapsedGapToggle(event.target) && clickedIdx !== -1) {
+    if (event.shiftKey && prevScope === selectionScope) {
+      event.preventDefault();
+      const sel = window.getSelection();
+      const existing = sel && !sel.isCollapsed ? selectedRowRange(rowEls, sel) : null;
+      let anchorIdx = prevAnchor !== -1 ? prevAnchor : existing ? existing[0] : -1;
+      const adjIdx = adjacentTextRowIndex(rowEls, clickedIdx, anchorIdx);
+      if (adjIdx !== -1) {
+        if (anchorIdx === -1) anchorIdx = adjIdx;
+        const gapIndex = Number(rowEls[clickedIdx].dataset.gapIndex);
+        if (!Number.isNaN(gapIndex)) proximityGapIndices.add(gapIndex);
+        dragAnchorRowIndex = anchorIdx;
+        selectWholeLineRange(selectionScope, anchorIdx, adjIdx);
+        updateSelectionVisuals();
+        return;
+      }
+    }
+    // Plain gap click falls through so click-to-expand still runs; avoid
+    // starting a text-selection drag on the unselectable gap chrome.
+    return;
+  }
+
+  // Ctrl+A / right-click select-all leave a broad DOM selection; a following
+  // click-drag would otherwise start HTML5 drag-and-drop of that text instead
+  // of a new caret selection. Collapse first (non-Shift only).
+  if (!event.shiftKey) {
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) sel.removeAllRanges();
+  }
+
   dragAnchorRowIndex = clickedIdx;
   // Cursor lock is independent of the pan scrollbar: any primary-button
   // mousedown in a pane is a selection drag and must keep the I-beam over
   // collapsed gaps. Auto-scroll still needs the bar.
   setDragSelecting(true);
   if (dragPanScroll && !dragRaf) dragRaf = requestAnimationFrame(autoScrollStep);
+}, true);
+
+// Diff panes are not content-editable: never allow HTML5 drag of selected text
+// (it swallows mouseup and blocks click-drag reselection after Ctrl+A).
+document.addEventListener("dragstart", (event) => {
+  if (event.target instanceof Element && event.target.closest(".select-scope")) {
+    event.preventDefault();
+  }
 }, true);
 
 document.addEventListener("mousemove", (event) => {
@@ -1392,6 +1452,8 @@ function buildFileDiffBody(details, file) {
     resizeHandlers.push(sizePanScrolls);
 
     scroll.addEventListener("click", (event) => {
+      // Shift+click extends/arms selection (see mousedown); do not toggle expand.
+      if (event.shiftKey) return;
       const gapRow = event.target.closest("tr.gap-toggle[data-gap-index]");
       if (!gapRow || !scroll.contains(gapRow)) return;
       const gapIndex = Number(gapRow.dataset.gapIndex);

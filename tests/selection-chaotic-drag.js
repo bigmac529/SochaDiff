@@ -1051,6 +1051,172 @@ async function main() {
       await clearNativeSelection(page);
     });
 
+    await runScenario("Shift+click collapsed gap extends and arms (no expand)", async () => {
+      await clearNativeSelection(page);
+      const topGap = gaps.find((g) => g < firstText);
+      const botGap = gaps.find((g) => g > textRows[textRows.length - 1]);
+      assert("leading+trailing gaps for shift-click", topGap != null && botGap != null, `gaps=${gaps}`);
+      if (topGap == null || botGap == null) return;
+
+      const firstPt = await centerOfRow(page, "left", firstText, FILE);
+      const leadGapPt = await centerOfRow(page, "left", topGap, FILE);
+      assert("shift-gap points present", !!(firstPt && leadGapPt), JSON.stringify({ firstPt, leadGapPt }));
+      if (!firstPt || !leadGapPt) return;
+
+      await page.mouse.click(firstPt.x, firstPt.y);
+      await sleep(40);
+      await page.keyboard.down("Shift");
+      await page.mouse.click(leadGapPt.x, leadGapPt.y);
+      await page.keyboard.up("Shift");
+      await sleep(50);
+
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "shift+gap arms leading gap",
+        left.gapArmed.includes(topGap),
+        `armed=${left.gapArmed} expected ${topGap}`
+      );
+      const stillCollapsed = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        const pane = details && details.querySelector(".left-pane.select-scope");
+        const gaps = pane ? Array.from(pane.querySelectorAll("tr.gap-toggle")) : [];
+        return gaps.every((tr) => tr.dataset.expanded !== "true");
+      }, FILE);
+      assert("shift+gap does not expand gaps", stillCollapsed);
+
+      let copied = await copySelectionText(page);
+      let text = copied || "";
+      const leadLines = text.split(/\r?\n/).filter(Boolean);
+      assert(
+        "shift+leading-gap copy includes hidden line 1",
+        leadLines.includes("line 1"),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      assert(
+        "shift+leading-gap copy includes visible line 7",
+        leadLines.includes("line 7"),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      assert("shift+leading-gap copy stays single-pane", !/CHANGED B/.test(text));
+
+      // Trailing gap from last visible text row (avoids whole-pane fullSideText).
+      await clearNativeSelection(page);
+      const lastText = textRows[textRows.length - 1];
+      const lastPt = await centerOfRow(page, "left", lastText, FILE);
+      const trailGapPt = await centerOfRow(page, "left", botGap, FILE);
+      await page.mouse.click(lastPt.x, lastPt.y);
+      await sleep(40);
+      await page.keyboard.down("Shift");
+      await page.mouse.click(trailGapPt.x, trailGapPt.y);
+      await page.keyboard.up("Shift");
+      await sleep(50);
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "shift+gap arms trailing gap",
+        left.gapArmed.includes(botGap),
+        `armed=${left.gapArmed} expected ${botGap}`
+      );
+      copied = await copySelectionText(page);
+      text = copied || "";
+      const trailLines = text.split(/\r?\n/).filter(Boolean);
+      assert(
+        "shift+trailing-gap copy includes line 20",
+        trailLines.includes("line 20"),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      assert(
+        "shift+trailing-gap copy keeps last visible line",
+        trailLines.includes("line 13"),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      assert(
+        "shift+trailing-gap copy excludes earlier visible line 7",
+        !trailLines.includes("line 7"),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      await clearNativeSelection(page);
+    });
+
+    await runScenario("Ctrl+A then click-drag reselections partially", async () => {
+      await clearNativeSelection(page);
+      const changedBox = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        const pane = details && details.querySelector(".left-pane.select-scope");
+        if (!pane) return null;
+        const tc = Array.from(pane.querySelectorAll(".text-content")).find((el) =>
+          /CHANGED/.test(el.textContent || "")
+        );
+        if (!tc) return null;
+        const walker = document.createTreeWalker(tc, NodeFilter.SHOW_TEXT);
+        let node;
+        let pos = 0;
+        let startNode = null;
+        let startOff = 0;
+        let endNode = null;
+        let endOff = 0;
+        const full = tc.textContent || "";
+        const i0 = full.indexOf("CHANGED");
+        if (i0 < 0) return null;
+        const i1 = i0 + "CHANGED".length;
+        while ((node = walker.nextNode())) {
+          const next = pos + node.length;
+          if (!startNode && i0 >= pos && i0 < next) {
+            startNode = node;
+            startOff = i0 - pos;
+          }
+          if (!endNode && i1 > pos && i1 <= next) {
+            endNode = node;
+            endOff = i1 - pos;
+          }
+          pos = next;
+        }
+        if (!startNode || !endNode) return null;
+        const range = document.createRange();
+        range.setStart(startNode, startOff);
+        range.setEnd(endNode, endOff);
+        const br = range.getBoundingClientRect();
+        return { left: br.left + 1, right: br.right - 1, y: br.top + br.height / 2, mid: br.left + br.width / 2 };
+      }, FILE);
+      assert("CHANGED word box for Ctrl+A reselection", !!changedBox, JSON.stringify(changedBox));
+      if (!changedBox) return;
+
+      await page.mouse.click(changedBox.mid, changedBox.y);
+      await sleep(30);
+      await page.keyboard.press("Control+a");
+      await sleep(40);
+      let copied = await copySelectionText(page);
+      assert(
+        "Ctrl+A copy is whole file first",
+        /line 1/.test(copied || "") && /line 20/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 120))}`
+      );
+
+      await page.mouse.move(changedBox.left, changedBox.y);
+      await page.mouse.down();
+      await page.mouse.move(changedBox.right, changedBox.y, { steps: 10 });
+      await page.mouse.up();
+      await sleep(50);
+
+      const native = await page.evaluate(() => window.getSelection()?.toString() || "");
+      copied = await copySelectionText(page);
+      assert("after Ctrl+A drag native is CHANGED", native === "CHANGED", `native=${JSON.stringify(native)}`);
+      assert(
+        "after Ctrl+A drag copy is just CHANGED",
+        copied === "CHANGED",
+        `copy=${JSON.stringify(copied)}`
+      );
+      assert(
+        "after Ctrl+A drag copy is not whole file",
+        !/line 20/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 120))}`
+      );
+      await clearNativeSelection(page);
+    });
+
 
     // ── blank-a / blank-b: blank-row marks ───────────────────────────────
     const BLANK_FILE = "lines.txt";
