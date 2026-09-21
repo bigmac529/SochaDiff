@@ -223,6 +223,35 @@ async function centerOfRow(page, side, rowIndex, fileName) {
   );
 }
 
+/** Center of the line-number gutter cell for a row (falls back to sign). */
+async function centerOfGutter(page, side, rowIndex, fileName) {
+  return page.evaluate(
+    ({ paneSide, idx, file }) => {
+      let root = document;
+      if (file) {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+        );
+        if (!details) return null;
+        root = details;
+      } else {
+        const open = document.querySelector("details.file-diff[open]") || document.querySelector("details.file-diff");
+        if (open) root = open;
+      }
+      const pane = root.querySelector(
+        paneSide === "right" ? ".right-pane.select-scope" : ".left-pane.select-scope"
+      );
+      const tr = pane && pane.querySelectorAll("tbody > tr")[idx];
+      if (!tr) return null;
+      const cell = tr.querySelector("td.num") || tr.querySelector("td.sign");
+      if (!cell) return null;
+      const r = cell.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: (r.top + r.bottom) / 2 };
+    },
+    { paneSide: side, idx: rowIndex, file: fileName || null }
+  );
+}
+
 /** Drag along a polyline of {x,y} points (first = down, last = up). */
 async function chaoticDrag(page, points, stepsPerSeg = 8) {
   if (!points.length) return;
@@ -918,6 +947,110 @@ async function main() {
       assert("edge skim selection remains left", left.selectedInPane || /line /.test(left.selectedText));
       assert("edge skim no right bleed", right.wsMarked.length === 0 && right.gapArmed.length === 0);
     });
+
+    // Line-number / sign gutters are user-select:none; dragging them must still
+    // synthesize whole-line selection + clean copy (no gutter digits / signs).
+    await runScenario("gutter drag selects whole lines and copies cleanly", async () => {
+      await clearNativeSelection(page);
+      const startIdx = firstText;
+      const endIdx = textRows.find((i) => i > startIdx && i !== startIdx) ?? midText;
+      const g0 = await centerOfGutter(page, "left", startIdx, FILE);
+      const g1 = await centerOfGutter(page, "left", endIdx, FILE);
+      assert("gutter start cell present", !!(g0 && g0.x), JSON.stringify(g0));
+      assert("gutter end cell present", !!(g1 && g1.x), JSON.stringify(g1));
+      if (!g0 || !g1) return;
+      await chaoticDrag(page, [g0, { x: g0.x, y: (g0.y + g1.y) / 2 }, g1]);
+      left = await paneSnapshot(page, "left", FILE);
+      const right = await paneSnapshot(page, "right", FILE);
+      assert(
+        "gutter drag keeps selection in left pane",
+        left.selectedInPane || /line /.test(left.selectedText),
+        left.selectedText.slice(0, 60)
+      );
+      assert(
+        "gutter drag no right-pane bleed",
+        right.wsMarked.length === 0 && right.gapArmed.length === 0,
+        `right ws=${right.wsMarked} armed=${right.gapArmed}`
+      );
+      const copied = await copySelectionText(page);
+      const text = copied || "";
+      assert(
+        "gutter drag copy includes first visible line",
+        /line 7/.test(text),
+        `copy=${JSON.stringify(text.slice(0, 120))}`
+      );
+      assert(
+        "gutter drag copy has no gutter leakage",
+        !/^\d+\t/m.test(text) && !/unchanged lines/.test(text) && !/CHANGED B/.test(text),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      await clearNativeSelection(page);
+    });
+
+    await runScenario("Shift+gutter click extends whole-line selection", async () => {
+      await clearNativeSelection(page);
+      const startIdx = firstText;
+      const endIdx = midText;
+      const g0 = await centerOfGutter(page, "left", startIdx, FILE);
+      const g1 = await centerOfGutter(page, "left", endIdx, FILE);
+      assert("shift gutter cells present", !!(g0 && g1), JSON.stringify({ g0, g1 }));
+      if (!g0 || !g1) return;
+      await page.mouse.click(g0.x, g0.y);
+      await sleep(40);
+      await page.keyboard.down("Shift");
+      await page.mouse.click(g1.x, g1.y);
+      await page.keyboard.up("Shift");
+      await sleep(50);
+      const copied = await copySelectionText(page);
+      const text = copied || "";
+      assert(
+        "shift+gutter copy includes start line",
+        /line 7/.test(text),
+        `copy=${JSON.stringify(text.slice(0, 120))}`
+      );
+      assert(
+        "shift+gutter copy includes mid span",
+        text.split(/\r?\n/).filter(Boolean).length >= 2,
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      assert(
+        "shift+gutter copy has no gutter leakage",
+        !/^\d+\t/m.test(text) && !/CHANGED B/.test(text),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      await clearNativeSelection(page);
+    });
+
+    await runScenario("gutter drag onto adjacent gap arms collapsed lines", async () => {
+      await clearNativeSelection(page);
+      const topGap = gaps.find((g) => g < firstText);
+      assert("leading gap present for gutter arm", topGap != null, `gaps=${gaps}`);
+      if (topGap == null) return;
+      const gText = await centerOfGutter(page, "left", firstText, FILE);
+      const gapPt = await centerOfRow(page, "left", topGap, FILE);
+      assert("gutter+gap points present", !!(gText && gapPt), JSON.stringify({ gText, gapPt }));
+      if (!gText || !gapPt) return;
+      await chaoticDrag(page, [gText, { x: gText.x, y: (gText.y + gapPt.y) / 2 }, gapPt]);
+      left = await paneSnapshot(page, "left", FILE);
+      assert(
+        "gutter-to-gap arms leading gap",
+        left.gapArmed.includes(topGap),
+        `armed=${left.gapArmed} expected ${topGap}`
+      );
+      const copied = await copySelectionText(page);
+      const text = copied || "";
+      assert(
+        "gutter-armed copy includes hidden line 1",
+        /line 1/.test(text),
+        `copy=${JSON.stringify(text.slice(0, 160))}`
+      );
+      assert(
+        "gutter-armed copy stays single-pane",
+        !/CHANGED B/.test(text)
+      );
+      await clearNativeSelection(page);
+    });
+
 
     // ── blank-a / blank-b: blank-row marks ───────────────────────────────
     const BLANK_FILE = "lines.txt";

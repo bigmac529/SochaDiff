@@ -274,6 +274,9 @@ function textTd(className, text, ending, segments) {
 let selectionScope = null;
 let constrainingSelection = false;
 let dragSelecting = false;
+// True when the current drag started on a line-number / sign gutter
+// (user-select:none): we synthesize whole-line ranges on mousemove.
+let gutterLineDrag = false;
 let dragPanScroll = null;
 let dragRaf = 0;
 const dragPointer = { x: 0, y: 0 };
@@ -419,6 +422,7 @@ function setDragSelecting(on) {
 // with user-select:none.
 function endDragSelecting() {
   setDragSelecting(false);
+  gutterLineDrag = false;
   dragPanScroll = null;
   if (dragRaf) {
     cancelAnimationFrame(dragRaf);
@@ -426,31 +430,110 @@ function endDragSelecting() {
   }
 }
 
+// Line-number / sign gutters are user-select:none (so native drag is a no-op).
+// Treat them as whole-line hit targets, matching common IDE / diff-viewer UX.
+function isGutterCell(target) {
+  if (!(target instanceof Element)) return false;
+  const cell = target.closest("td.num, td.sign");
+  return !!(cell && !cell.closest("tr.gap-toggle"));
+}
+
+// Build a DOM selection covering every .text-content from fromIdx..toIdx
+// (gap rows in between have no text node and are skipped for the range ends;
+// copy / gap-arming still pull them in via isIncludedGapRow).
+function selectWholeLineRange(scope, fromIdx, toIdx) {
+  if (!scope) return;
+  const rowEls = Array.from(scope.querySelectorAll("tbody > tr"));
+  if (!rowEls.length) return;
+  let lo = Math.min(fromIdx, toIdx);
+  let hi = Math.max(fromIdx, toIdx);
+  lo = Math.max(0, Math.min(lo, rowEls.length - 1));
+  hi = Math.max(0, Math.min(hi, rowEls.length - 1));
+  let firstTc = null;
+  let lastTc = null;
+  for (let i = lo; i <= hi; i++) {
+    const tc = rowEls[i].querySelector(".text-content");
+    if (!tc) continue;
+    if (!firstTc) firstTc = tc;
+    lastTc = tc;
+  }
+  if (!firstTc || !lastTc) return;
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.setStart(firstTc, 0);
+  range.setEnd(lastTc, lastTc.childNodes.length);
+  constrainingSelection = true;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  constrainingSelection = false;
+  selectionScope = scope;
+  wholeFileScope = null;
+}
+
 document.addEventListener("mousedown", (event) => {
+  const prevScope = selectionScope;
+  const prevAnchor = dragAnchorRowIndex;
   selectionScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
   wholeFileScope = null;
   proximityGapIndices = new Set();
-  dragAnchorRowIndex = -1;
   clearSelectionVisuals();
   setDragSelecting(false);
-  if (selectionScope && event.button === 0) {
-    const anchorTr = event.target instanceof Element ? event.target.closest("tr") : null;
-    dragAnchorRowIndex = anchorTr ? Array.from(selectionScope.querySelectorAll("tbody > tr")).indexOf(anchorTr) : -1;
-    dragPanScroll = panScrollForScope(selectionScope);
+  gutterLineDrag = false;
+  dragAnchorRowIndex = -1;
+  if (!selectionScope || event.button !== 0) return;
+
+  const rowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
+  const anchorTr = event.target instanceof Element ? event.target.closest("tr") : null;
+  const clickedIdx = anchorTr ? rowEls.indexOf(anchorTr) : -1;
+  dragPanScroll = panScrollForScope(selectionScope);
+  dragPointer.x = event.clientX;
+  dragPointer.y = event.clientY;
+
+  if (isGutterCell(event.target) && clickedIdx !== -1) {
+    // Prevent the browser's empty native selection on user-select:none gutters.
+    event.preventDefault();
+    if (event.shiftKey && prevScope === selectionScope) {
+      const sel = window.getSelection();
+      const existing = sel && !sel.isCollapsed ? selectedRowRange(rowEls, sel) : null;
+      const anchorIdx =
+        prevAnchor !== -1 ? prevAnchor : existing ? existing[0] : -1;
+      if (anchorIdx !== -1) {
+        dragAnchorRowIndex = anchorIdx;
+        selectWholeLineRange(selectionScope, anchorIdx, clickedIdx);
+        updateSelectionVisuals();
+        return;
+      }
+    }
+    dragAnchorRowIndex = clickedIdx;
+    gutterLineDrag = true;
+    selectWholeLineRange(selectionScope, clickedIdx, clickedIdx);
     // Cursor lock is independent of the pan scrollbar: any primary-button
     // mousedown in a pane is a selection drag and must keep the I-beam over
     // collapsed gaps. Auto-scroll still needs the bar.
     setDragSelecting(true);
-    dragPointer.x = event.clientX;
-    dragPointer.y = event.clientY;
     if (dragPanScroll && !dragRaf) dragRaf = requestAnimationFrame(autoScrollStep);
+    updateSelectionVisuals();
+    return;
   }
+
+  dragAnchorRowIndex = clickedIdx;
+  // Cursor lock is independent of the pan scrollbar: any primary-button
+  // mousedown in a pane is a selection drag and must keep the I-beam over
+  // collapsed gaps. Auto-scroll still needs the bar.
+  setDragSelecting(true);
+  if (dragPanScroll && !dragRaf) dragRaf = requestAnimationFrame(autoScrollStep);
 }, true);
 
 document.addEventListener("mousemove", (event) => {
   if (!dragSelecting) return;
   dragPointer.x = event.clientX;
   dragPointer.y = event.clientY;
+  if (gutterLineDrag && selectionScope && dragAnchorRowIndex !== -1) {
+    const rowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
+    if (rowEls.length) {
+      selectWholeLineRange(selectionScope, dragAnchorRowIndex, cursorRowFromPointer(rowEls));
+    }
+  }
   // Arming happens in updateSelectionVisuals (fires again on the resulting
   // selectionchange with a fresh selection); calling it here too keeps the
   // dragPointer-driven hover check responsive.
