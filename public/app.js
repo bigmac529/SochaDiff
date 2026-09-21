@@ -801,11 +801,39 @@ function gapHiddenText(file, gapIndex, side) {
     .join("");
 }
 
+// True when the selection lives entirely inside one .text-content but does not
+// cover that whole line — word / character selects must copy verbatim, not the
+// full rebuilt line (multi-row copy still joins whole lines below).
+function isPartialTextContentSelection(selection, textContent) {
+  if (!selection || !textContent || selection.isCollapsed || !selection.rangeCount) return false;
+  const anchorEl =
+    selection.anchorNode &&
+    (selection.anchorNode.nodeType === Node.ELEMENT_NODE
+      ? selection.anchorNode
+      : selection.anchorNode.parentElement);
+  const focusEl =
+    selection.focusNode &&
+    (selection.focusNode.nodeType === Node.ELEMENT_NODE
+      ? selection.focusNode
+      : selection.focusNode.parentElement);
+  if (!anchorEl || !focusEl) return false;
+  if (!textContent.contains(anchorEl) && textContent !== anchorEl) return false;
+  if (!textContent.contains(focusEl) && textContent !== focusEl) return false;
+  // Entire line element is inside the selection (e.g. triple-click / select-all-chars).
+  if (selection.containsNode(textContent, false)) return false;
+  const full = lineTextFromContent(textContent);
+  if (full === "") return false; // blank / pad-only row — keep full-line path
+  const native = selection.toString();
+  if (native === full) return false;
+  return true;
+}
+
 function copyDiffSelection(event, scroll, file) {
   const selection = window.getSelection();
   const anchor = selection && selection.anchorNode;
   const anchorElement = anchor && (anchor.nodeType === Node.ELEMENT_NODE ? anchor : anchor.parentElement);
-  if (!selection || !anchorElement) return;
+  // Caret-only: do not synthesize a whole-line clipboard payload.
+  if (!selection || !anchorElement || selection.isCollapsed) return;
 
   // A selection covering an entire pane — via right-click/Ctrl+A, or a manual
   // drag spanning its first line to its last — must include lines collapsed
@@ -839,6 +867,16 @@ function copyDiffSelection(event, scroll, file) {
       // Extend for proximity-armed edge gaps, then include any collapsed gap
       // the selection spans (interior) or armed — hidden text from gap.rows.
       const [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, range[0], range[1], false);
+      // Single visible text row with a word/char (partial) selection: copy the
+      // native selected text, not the rebuilt full line + EOL.
+      if (firstIdx === lastIdx) {
+        const textContent = rowEls[firstIdx].querySelector(".text-content");
+        if (textContent && isPartialTextContentSelection(selection, textContent)) {
+          event.clipboardData.setData("text/plain", selection.toString());
+          event.preventDefault();
+          return;
+        }
+      }
       const parts = [];
       for (let i = firstIdx; i <= lastIdx; i++) {
         const tr = rowEls[i];
@@ -859,9 +897,16 @@ function copyDiffSelection(event, scroll, file) {
 
   const selectedRows = Array.from(scroll.querySelectorAll(".text-content"))
     .filter((textContent) => selection.containsNode(textContent, true));
-  const copiedText = selectedRows.length > 1
-    ? selectedRows.map((textContent) => lineTextFromContent(textContent)).join("\n")
-    : (selectedRows.length === 1 ? lineTextFromContent(selectedRows[0]) : selection.toString());
+  let copiedText;
+  if (selectedRows.length > 1) {
+    copiedText = selectedRows.map((textContent) => lineTextFromContent(textContent)).join("\n");
+  } else if (selectedRows.length === 1 && isPartialTextContentSelection(selection, selectedRows[0])) {
+    copiedText = selection.toString();
+  } else if (selectedRows.length === 1) {
+    copiedText = lineTextFromContent(selectedRows[0]);
+  } else {
+    copiedText = selection.toString();
+  }
   event.clipboardData.setData("text/plain", copiedText);
   event.preventDefault();
 }

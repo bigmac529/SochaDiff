@@ -791,6 +791,111 @@ async function main() {
       await clearNativeSelection(page);
     });
 
+    // Double-click / partial drag inside one .text-content must copy the
+    // selected word/chars, not expand to the full rebuilt line (multi-row
+    // copy still joins whole lines). Caret-only must not invent a line.
+    await runScenario("partial single-row copy stays verbatim", async () => {
+      await clearNativeSelection(page);
+      const wordBox = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        const tc = Array.from(details.querySelectorAll(".left-pane .text-content")).find((el) =>
+          el.textContent.includes("CHANGED")
+        );
+        if (!tc) return null;
+        const walker = document.createTreeWalker(tc, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const idx = node.textContent.indexOf("CHANGED");
+          if (idx < 0) continue;
+          const range = document.createRange();
+          range.setStart(node, idx);
+          range.setEnd(node, idx + "CHANGED".length);
+          const r = range.getBoundingClientRect();
+          return {
+            x: (r.left + r.right) / 2,
+            y: (r.top + r.bottom) / 2,
+            left: r.left,
+            right: r.right,
+          };
+        }
+        return null;
+      }, FILE);
+      assert("CHANGED word box present", !!wordBox, JSON.stringify(wordBox));
+      if (!wordBox) return;
+
+      await page.mouse.click(wordBox.x, wordBox.y, { clickCount: 2 });
+      await sleep(50);
+      let native = await page.evaluate(() => window.getSelection()?.toString() || "");
+      let copied = await copySelectionText(page);
+      assert(
+        "double-click native selects CHANGED",
+        native === "CHANGED",
+        `native=${JSON.stringify(native)}`
+      );
+      assert(
+        "double-click copy is just CHANGED (not full line)",
+        copied === "CHANGED",
+        `copy=${JSON.stringify(copied)}`
+      );
+      assert(
+        "double-click copy excludes neighbor tokens",
+        !/line 10/.test(copied || "") && !/CHANGED B/.test(copied || ""),
+        `copy=${JSON.stringify(copied)}`
+      );
+
+      await clearNativeSelection(page);
+      await page.mouse.move(wordBox.left + 1, wordBox.y);
+      await page.mouse.down();
+      await page.mouse.move(wordBox.right - 1, wordBox.y, { steps: 6 });
+      await page.mouse.up();
+      await sleep(50);
+      native = await page.evaluate(() => window.getSelection()?.toString() || "");
+      copied = await copySelectionText(page);
+      assert(
+        "partial drag native is CHANGED",
+        native === "CHANGED",
+        `native=${JSON.stringify(native)}`
+      );
+      assert(
+        "partial drag copy stays verbatim",
+        copied === "CHANGED",
+        `copy=${JSON.stringify(copied)}`
+      );
+
+      // Caret-only: handler must not preventDefault with a synthetic full line.
+      await clearNativeSelection(page);
+      const caretPt = await centerOfRow(page, "left", firstText, FILE);
+      await page.mouse.click(caretPt.x, caretPt.y);
+      await sleep(40);
+      const caretResult = await page.evaluate(() => {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return { collapsed: true, copy: "", prevented: false };
+        const node = sel.anchorNode;
+        const el = node && (node.nodeType === 1 ? node : node.parentElement);
+        const scroll = el && el.closest(".diff-scroll");
+        if (!scroll) return { collapsed: sel.isCollapsed, copy: "", prevented: false };
+        const dt = new DataTransfer();
+        const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData: dt });
+        if (!event.clipboardData) Object.defineProperty(event, "clipboardData", { value: dt });
+        scroll.dispatchEvent(event);
+        return {
+          collapsed: sel.isCollapsed,
+          copy: (event.clipboardData && event.clipboardData.getData("text/plain")) || dt.getData("text/plain") || "",
+          prevented: event.defaultPrevented,
+        };
+      });
+      assert("caret click is collapsed", caretResult.collapsed, JSON.stringify(caretResult));
+      assert(
+        "caret copy does not synthesize a line",
+        !caretResult.prevented && caretResult.copy === "",
+        JSON.stringify(caretResult)
+      );
+      await clearNativeSelection(page);
+    });
+
+
     await runScenario("drag near pane edge stays in-scope", async () => {
       await clearNativeSelection(page);
       const a = await centerOfRow(page, "left", firstText, FILE);
