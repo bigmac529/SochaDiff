@@ -1139,6 +1139,130 @@ async function main() {
       await clearNativeSelection(page);
     });
 
+    await runScenario("Shift+text click keeps drag anchor for later Shift+gutter", async () => {
+      await clearNativeSelection(page);
+      const early = textRows[0];
+      const mid = textRows[Math.min(2, textRows.length - 1)];
+      const later = textRows[Math.min(4, textRows.length - 1)];
+      assert(
+        "shift-text-anchor rows distinct",
+        early != null && mid != null && later != null && early < mid && mid < later,
+        JSON.stringify({ early, mid, later, textRows })
+      );
+      if (early == null || mid == null || later == null || !(early < mid && mid < later)) return;
+
+      const earlyPt = await centerOfRow(page, "left", early, FILE);
+      const midPt = await centerOfRow(page, "left", mid, FILE);
+      const laterPt = await centerOfRow(page, "left", later, FILE);
+      const midGutter = await centerOfGutter(page, "left", mid, FILE);
+      const laterGutter = await centerOfGutter(page, "left", later, FILE);
+      assert(
+        "shift-text-anchor points present",
+        !!(earlyPt && midPt && laterPt && midGutter && laterGutter)
+      );
+      if (!earlyPt || !midPt || !laterPt || !midGutter || !laterGutter) return;
+
+      // Drag early → mid (dragAnchor = early).
+      await chaoticDrag(page, [earlyPt, midPt]);
+      await sleep(40);
+
+      // Shift+click later text extends native selection; must NOT rewrite dragAnchor
+      // to `later` (that previously made Shift+gutter mid drop `early`).
+      await page.keyboard.down("Shift");
+      await page.mouse.click(laterPt.x, laterPt.y);
+      await page.keyboard.up("Shift");
+      await sleep(50);
+
+      await page.keyboard.down("Shift");
+      await page.mouse.click(midGutter.x, midGutter.y);
+      await page.keyboard.up("Shift");
+      await sleep(50);
+
+      // Rect-based check: old bug set dragAnchor=later, so Shift+gutter mid
+      // selected only mid..later and dropped early.
+      const midShrink = await page.evaluate(
+        ({ fileName, earlyIdx, midIdx }) => {
+          const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+            (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+          );
+          const pane = details && details.querySelector(".left-pane.select-scope");
+          if (!pane) return { early: false, mid: false };
+          const rows = Array.from(pane.querySelectorAll("tbody > tr"));
+          const sel = window.getSelection();
+          const rects = sel.rangeCount ? Array.from(sel.getRangeAt(0).getClientRects()) : [];
+          const hit = (idx) => {
+            const tc = rows[idx] && rows[idx].querySelector(".text-content");
+            if (!tc) return false;
+            const box = tc.getBoundingClientRect();
+            return rects.some(
+              (r) =>
+                r.height > 0 &&
+                r.bottom > box.top + 1 &&
+                r.top < box.bottom - 1 &&
+                r.right > box.left + 1 &&
+                r.left < box.right - 1
+            );
+          };
+          return { early: hit(earlyIdx), mid: hit(midIdx), text: (sel.toString() || "").slice(0, 160) };
+        },
+        { fileName: FILE, earlyIdx: early, midIdx: mid }
+      );
+      assert(
+        "after Shift+text then Shift+gutter mid, early row stays selected",
+        midShrink.early,
+        JSON.stringify(midShrink)
+      );
+      assert(
+        "after Shift+text then Shift+gutter mid, mid row stays selected",
+        midShrink.mid,
+        JSON.stringify(midShrink)
+      );
+
+      // Re-extend to later via Shift+gutter: full early→later span with preserved anchor.
+      await page.keyboard.down("Shift");
+      await page.mouse.click(laterGutter.x, laterGutter.y);
+      await page.keyboard.up("Shift");
+      await sleep(50);
+      const fullSpan = await page.evaluate(
+        ({ fileName, earlyIdx, laterIdx }) => {
+          const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+            (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+          );
+          const pane = details && details.querySelector(".left-pane.select-scope");
+          if (!pane) return { early: false, later: false };
+          const rows = Array.from(pane.querySelectorAll("tbody > tr"));
+          const sel = window.getSelection();
+          const rects = sel.rangeCount ? Array.from(sel.getRangeAt(0).getClientRects()) : [];
+          const hit = (idx) => {
+            const tc = rows[idx] && rows[idx].querySelector(".text-content");
+            if (!tc) return false;
+            const box = tc.getBoundingClientRect();
+            return rects.some(
+              (r) =>
+                r.height > 0 &&
+                r.bottom > box.top + 1 &&
+                r.top < box.bottom - 1 &&
+                r.right > box.left + 1 &&
+                r.left < box.right - 1
+            );
+          };
+          return { early: hit(earlyIdx), later: hit(laterIdx), text: (sel.toString() || "").slice(0, 200) };
+        },
+        { fileName: FILE, earlyIdx: early, laterIdx: later }
+      );
+      assert(
+        "Shift+gutter later from preserved anchor keeps early row",
+        fullSpan.early,
+        JSON.stringify(fullSpan)
+      );
+      assert(
+        "Shift+gutter later from preserved anchor keeps later row",
+        fullSpan.later,
+        JSON.stringify(fullSpan)
+      );
+      await clearNativeSelection(page);
+    });
+
     await runScenario("Ctrl+A then click-drag reselections partially", async () => {
       await clearNativeSelection(page);
       const changedBox = await page.evaluate((fileName) => {

@@ -446,6 +446,17 @@ function isCollapsedGapToggle(target) {
   return !!(tr && tr.dataset.expanded !== "true");
 }
 
+// Anchor row for a Shift+extend click: keep the prior drag anchor when we
+// have one; otherwise the end of the existing selection farther from the click
+// (classic text-editor Shift-click behavior).
+function shiftExtendAnchorIdx(prevAnchor, existing, clickedIdx) {
+  if (prevAnchor !== -1) return prevAnchor;
+  if (!existing) return -1;
+  return Math.abs(clickedIdx - existing[0]) >= Math.abs(clickedIdx - existing[1])
+    ? existing[0]
+    : existing[1];
+}
+
 // Nearest .text-content row adjacent to a gap row index, preferring the side
 // toward fromIdx when both neighbors exist.
 function adjacentTextRowIndex(rowEls, gapIdx, fromIdx) {
@@ -495,7 +506,10 @@ document.addEventListener("mousedown", (event) => {
   const prevAnchor = dragAnchorRowIndex;
   selectionScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
   wholeFileScope = null;
-  proximityGapIndices = new Set();
+  // Same-scope Shift+extend keeps proximity-armed edge gaps; a fresh click
+  // (or pane switch) starts a new selection and clears them.
+  const sameScopeShift = !!(event.shiftKey && prevScope && selectionScope === prevScope);
+  if (!sameScopeShift) proximityGapIndices = new Set();
   clearSelectionVisuals();
   setDragSelecting(false);
   gutterLineDrag = false;
@@ -515,8 +529,7 @@ document.addEventListener("mousedown", (event) => {
     if (event.shiftKey && prevScope === selectionScope) {
       const sel = window.getSelection();
       const existing = sel && !sel.isCollapsed ? selectedRowRange(rowEls, sel) : null;
-      const anchorIdx =
-        prevAnchor !== -1 ? prevAnchor : existing ? existing[0] : -1;
+      const anchorIdx = shiftExtendAnchorIdx(prevAnchor, existing, clickedIdx);
       if (anchorIdx !== -1) {
         dragAnchorRowIndex = anchorIdx;
         selectWholeLineRange(selectionScope, anchorIdx, clickedIdx);
@@ -543,7 +556,7 @@ document.addEventListener("mousedown", (event) => {
       event.preventDefault();
       const sel = window.getSelection();
       const existing = sel && !sel.isCollapsed ? selectedRowRange(rowEls, sel) : null;
-      let anchorIdx = prevAnchor !== -1 ? prevAnchor : existing ? existing[0] : -1;
+      let anchorIdx = shiftExtendAnchorIdx(prevAnchor, existing, clickedIdx);
       const adjIdx = adjacentTextRowIndex(rowEls, clickedIdx, anchorIdx);
       if (adjIdx !== -1) {
         if (anchorIdx === -1) anchorIdx = adjIdx;
@@ -568,7 +581,17 @@ document.addEventListener("mousedown", (event) => {
     if (sel && !sel.isCollapsed) sel.removeAllRanges();
   }
 
-  dragAnchorRowIndex = clickedIdx;
+  // Shift+click text must keep the original selection anchor. Overwriting it
+  // with clickedIdx made a later Shift+gutter / Shift+gap shrink the range
+  // back toward this click and drop earlier rows.
+  if (sameScopeShift) {
+    const sel = window.getSelection();
+    const existing = sel && !sel.isCollapsed ? selectedRowRange(rowEls, sel) : null;
+    const anchorIdx = shiftExtendAnchorIdx(prevAnchor, existing, clickedIdx);
+    dragAnchorRowIndex = anchorIdx !== -1 ? anchorIdx : clickedIdx;
+  } else {
+    dragAnchorRowIndex = clickedIdx;
+  }
   // Cursor lock is independent of the pan scrollbar: any primary-button
   // mousedown in a pane is a selection drag and must keep the I-beam over
   // collapsed gaps. Auto-scroll still needs the bar.
