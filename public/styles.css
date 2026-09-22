@@ -1070,6 +1070,9 @@ button {
 .diff-pane {
   min-width: 0;
   overflow: hidden;
+  /* Isolate pane layout so a small gap splice in a large table does not
+     invalidate unrelated page chrome; keeps post-toggle pointer frames lighter. */
+  contain: layout style;
 }
 
 .diff-pane + .diff-pane {
@@ -1120,6 +1123,7 @@ button {
   overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(230, 237, 243, 0.32) transparent;
+  contain: layout style;
 }
 
 .diff-scroll:hover {
@@ -1374,4 +1378,42 @@ td.empty {
 .hint {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* Custom diff context menu (Copy only) — dark Socha Diff aesthetic */
+.diff-context-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 148px;
+  padding: 4px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-family: "Socha UI", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.diff-context-menu-item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.diff-context-menu-item:hover,
+.diff-context-menu-item:focus-visible {
+  outline: none;
+  background: rgba(47, 129, 247, 0.22);
+  color: var(--text);
 }

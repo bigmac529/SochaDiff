@@ -284,6 +284,8 @@ const dragPointer = { x: 0, y: 0 };
 // clamp visual marking to the actual drag span, so a transient native-selection
 // over-extension can't briefly highlight rows the drag never reached.
 let dragAnchorRowIndex = -1;
+// Cached tbody rows for the active drag — avoid querySelectorAll on every mousemove.
+let dragRowEls = null;
 // Set only by selectAllInScope; distinguishes a whole-file selection (which
 // may include lines collapsed out of the DOM) from a partial drag selection.
 let wholeFileScope = null;
@@ -433,6 +435,7 @@ function endDragSelecting() {
   setDragSelecting(false);
   gutterLineDrag = false;
   dragPanScroll = null;
+  dragRowEls = null;
   if (dragRaf) {
     cancelAnimationFrame(dragRaf);
     dragRaf = 0;
@@ -537,6 +540,7 @@ document.addEventListener("mousedown", (event) => {
       dragPanScroll = null;
     }
     dragAnchorRowIndex = -1;
+    dragRowEls = null;
     const gapIndex = Number(plainGapToggle.dataset.gapIndex);
     if (!Number.isNaN(gapIndex)) proximityGapIndices.delete(gapIndex);
     return;
@@ -555,6 +559,7 @@ document.addEventListener("mousedown", (event) => {
   if (!selectionScope || event.button !== 0) return;
 
   const rowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
+  dragRowEls = rowEls;
   const anchorTr = event.target instanceof Element ? event.target.closest("tr") : null;
   const clickedIdx = anchorTr ? rowEls.indexOf(anchorTr) : -1;
   dragPanScroll = panScrollForScope(selectionScope);
@@ -649,8 +654,11 @@ document.addEventListener("mousemove", (event) => {
   if (!dragSelecting) return;
   dragPointer.x = event.clientX;
   dragPointer.y = event.clientY;
+  if (!dragRowEls && selectionScope) {
+    dragRowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
+  }
   if (gutterLineDrag && selectionScope && dragAnchorRowIndex !== -1) {
-    const rowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
+    const rowEls = dragRowEls || [];
     if (rowEls.length) {
       selectWholeLineRange(selectionScope, dragAnchorRowIndex, cursorRowFromPointer(rowEls));
     }
@@ -661,15 +669,112 @@ document.addEventListener("mousemove", (event) => {
   updateSelectionVisuals();
 });
 
-// Right-clicking a side-by-side pane selects that whole file (A or B) so the
-// browser's native context menu offers Copy for the entire text. End any
-// in-progress drag first — contextmenu often arrives without a following
-// mouseup on Windows / WebView2.
+// Custom dark Copy menu on diff panes (replaces the native context menu).
+let diffContextMenu = null;
+let diffContextMenuScroll = null;
+let diffContextMenuFile = null;
+
+function hideDiffContextMenu() {
+  if (diffContextMenu) {
+    diffContextMenu.remove();
+    diffContextMenu = null;
+  }
+  diffContextMenuScroll = null;
+  diffContextMenuFile = null;
+}
+
+function runDiffContextCopy() {
+  const scroll = diffContextMenuScroll;
+  const file = diffContextMenuFile;
+  hideDiffContextMenu();
+  if (!scroll || !file) return;
+  const selection = window.getSelection();
+  const scope = selectionScope || (scroll.querySelector(".select-scope"));
+  // Empty / outside selection: match prior right-click UX by taking the whole pane.
+  if (scope && scroll.contains(scope)) {
+    if (!selection || selection.isCollapsed || scopeOf(selection.anchorNode) !== scope) {
+      selectAllInScope(scope);
+    }
+  }
+  const dt = new DataTransfer();
+  const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData: dt });
+  if (!event.clipboardData) {
+    Object.defineProperty(event, "clipboardData", { value: dt });
+  }
+  scroll.dispatchEvent(event);
+  const text = (event.clipboardData && event.clipboardData.getData("text/plain")) || dt.getData("text/plain") || "";
+  if (text && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+}
+
+function showDiffContextMenu(clientX, clientY, scroll, file) {
+  hideDiffContextMenu();
+  diffContextMenuScroll = scroll;
+  diffContextMenuFile = file;
+  const menu = el("div", "diff-context-menu");
+  menu.setAttribute("role", "menu");
+  const item = el("button", "diff-context-menu-item", "Copy");
+  item.type = "button";
+  item.setAttribute("role", "menuitem");
+  item.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    runDiffContextCopy();
+  });
+  menu.appendChild(item);
+  document.body.appendChild(menu);
+  diffContextMenu = menu;
+  const pad = 6;
+  const rect = menu.getBoundingClientRect();
+  let left = clientX;
+  let top = clientY;
+  if (left + rect.width + pad > window.innerWidth) left = Math.max(pad, window.innerWidth - rect.width - pad);
+  if (top + rect.height + pad > window.innerHeight) top = Math.max(pad, window.innerHeight - rect.height - pad);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 document.addEventListener("contextmenu", (event) => {
   endDragSelecting();
-  const scope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
-  if (scope) selectAllInScope(scope);
+  const target = event.target instanceof Element ? event.target : null;
+  const scope = target ? target.closest(".select-scope") : null;
+  if (!scope) {
+    hideDiffContextMenu();
+    return;
+  }
+  const scroll = scope.closest(".diff-scroll");
+  const fileDiff = scope.closest(".file-diff");
+  // file payload is stashed on the scroll via dataset during render; fall back
+  // to looking up from lastResult by path on the summary name.
+  let file = scroll && scroll._sochaFile;
+  if (!file && fileDiff && lastResult && Array.isArray(lastResult.differing)) {
+    const name = ((fileDiff.querySelector(".name") || {}).textContent || "").trim();
+    file = lastResult.differing.find((f) => f.path === name) || null;
+  }
+  if (!scroll || !file) return;
+  event.preventDefault();
+  // Keep an existing in-scope selection; otherwise arm whole-pane for Copy.
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || scopeOf(selection.anchorNode) !== scope) {
+    selectAllInScope(scope);
+  } else {
+    selectionScope = scope;
+  }
+  showDiffContextMenu(event.clientX, event.clientY, scroll, file);
 });
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideDiffContextMenu();
+}, true);
+
+document.addEventListener("pointerdown", (event) => {
+  if (!diffContextMenu) return;
+  if (event.target instanceof Element && diffContextMenu.contains(event.target)) return;
+  hideDiffContextMenu();
+}, true);
+
+document.addEventListener("scroll", () => hideDiffContextMenu(), true);
 
 document.addEventListener("mouseup", () => {
   endDragSelecting();
@@ -932,12 +1037,61 @@ function isTextContentFullySelected(selection, textContent) {
 // dropProximityArmsNotUnderPointer); the hard full-neighbor prune still runs
 // as defense in depth. Fully selecting the neighbor without the pointer on
 // the gap must not arm it.
+// Resolve the collapsed gap under the pointer. Prefer elementFromPoint inside
+// the active pane; fall back to geometry when the hit target is file chrome
+// (details summary / .paths) sitting directly above a leading gap — common for
+// the first .file-diff in the results, where summary/paths steal hits that
+// later files rarely see mid-viewport.
+function collapsedGapTrUnderPointer(rowEls) {
+  if (!selectionScope || !rowEls || !rowEls.length) return null;
+  const x = dragPointer.x;
+  const y = dragPointer.y;
+  const el = document.elementFromPoint(x, y);
+  if (el instanceof Element && selectionScope.contains(el)) {
+    const gapTr = el.closest("tr.gap-toggle");
+    if (gapTr && gapTr.dataset.expanded !== "true" && selectionScope.contains(gapTr)) return gapTr;
+  }
+
+  const paneBox = selectionScope.getBoundingClientRect();
+  if (x < paneBox.left || x > paneBox.right) return null;
+
+  const fileDiff = selectionScope.closest(".file-diff");
+  if (el instanceof Element && fileDiff) {
+    const summary = fileDiff.querySelector(":scope > summary");
+    const onSummary = summary && (el === summary || summary.contains(el));
+    const paths = document.querySelector(".paths");
+    const onPaths = paths && (el === paths || paths.contains(el));
+    const firstFile = document.querySelector("details.file-diff");
+    const isFirstFile = firstFile && fileDiff === firstFile;
+    if (onSummary || (onPaths && isFirstFile)) {
+      const lead = rowEls[0];
+      if (lead && lead.classList.contains("gap-toggle") && lead.dataset.expanded !== "true") {
+        return lead;
+      }
+    }
+  }
+
+  // Subpixel miss between summary bottom and gap top: match by row geometry.
+  let lo = 0;
+  let hi = rowEls.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const b = rowEls[mid].getBoundingClientRect();
+    if (y < b.top) hi = mid - 1;
+    else if (y > b.bottom) lo = mid + 1;
+    else {
+      const tr = rowEls[mid];
+      if (tr.classList.contains("gap-toggle") && tr.dataset.expanded !== "true") return tr;
+      return null;
+    }
+  }
+  return null;
+}
+
 function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
   if (!dragSelecting || !selectionScope) return;
-  const el = document.elementFromPoint(dragPointer.x, dragPointer.y);
-  if (!(el instanceof Element) || !selectionScope.contains(el)) return;
-  const gapTr = el.closest("tr.gap-toggle");
-  if (!gapTr || gapTr.dataset.expanded === "true" || !selectionScope.contains(gapTr)) return;
+  const gapTr = collapsedGapTrUnderPointer(rowEls);
+  if (!gapTr) return;
 
   const gapIdx = rowEls.indexOf(gapTr);
   if (gapIdx === -1) return;
@@ -960,15 +1114,8 @@ function maybeArmGapUnderPointer(rowEls, selectedFirst, selectedLast) {
 // After mouseup this is not called; sticky arms rely on pruneProximityGapArming.
 function dropProximityArmsNotUnderPointer(rowEls) {
   if (!dragSelecting || !proximityGapIndices.size || !rowEls || !selectionScope) return;
-  const el = document.elementFromPoint(dragPointer.x, dragPointer.y);
-  let underGapIndex = NaN;
-  if (el instanceof Element && selectionScope.contains(el)) {
-    const gapTr = el.closest("tr.gap-toggle");
-    if (gapTr && gapTr.dataset.expanded !== "true" && selectionScope.contains(gapTr)) {
-      const gapIdx = rowEls.indexOf(gapTr);
-      if (gapIdx !== -1) underGapIndex = Number(gapTr.dataset.gapIndex);
-    }
-  }
+  const gapTr = collapsedGapTrUnderPointer(rowEls);
+  const underGapIndex = gapTr ? Number(gapTr.dataset.gapIndex) : NaN;
   for (const gapIndex of [...proximityGapIndices]) {
     if (gapIndex !== underGapIndex) proximityGapIndices.delete(gapIndex);
   }
@@ -1059,12 +1206,23 @@ function pruneProximityGapArming(rowEls, selectedFirst, selectedLast, selection)
 // Used to bound the marked span; robust to the cursor being above the first
 // row (e.g. over the file-diff summary) or below the last.
 function cursorRowFromPointer(rowEls) {
+  if (!rowEls.length) return 0;
   const y = dragPointer.y;
-  for (let i = 0; i < rowEls.length; i++) {
-    const b = rowEls[i].getBoundingClientRect();
-    if (y >= b.top && y <= b.bottom) return i;
+  const firstBox = rowEls[0].getBoundingClientRect();
+  if (y < firstBox.top) return 0;
+  const lastBox = rowEls[rowEls.length - 1].getBoundingClientRect();
+  if (y > lastBox.bottom) return rowEls.length - 1;
+  // Binary search: avoid O(file) getBoundingClientRect during mousemove.
+  let lo = 0;
+  let hi = rowEls.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const b = rowEls[mid].getBoundingClientRect();
+    if (y < b.top) hi = mid - 1;
+    else if (y > b.bottom) lo = mid + 1;
+    else return mid;
   }
-  return y < rowEls[0].getBoundingClientRect().top ? 0 : rowEls.length - 1;
+  return Math.max(0, Math.min(lo, rowEls.length - 1));
 }
 
 // Mark blank/whitespace-only lines (and empty insert/delete placeholders) and
@@ -1089,7 +1247,10 @@ function updateSelectionVisuals() {
     return;
   }
 
-  const rowEls = Array.from(selectionScope.querySelectorAll("tbody > tr"));
+  const rowEls = (dragSelecting && dragRowEls && dragRowEls.length)
+    ? dragRowEls
+    : Array.from(selectionScope.querySelectorAll("tbody > tr"));
+  if (dragSelecting) dragRowEls = rowEls;
   const wholeFile = wholeFileScope === selectionScope;
   let firstIdx = 0;
   let lastIdx = rowEls.length - 1;
@@ -1603,9 +1764,38 @@ function getUnifiedEqualRowProto() {
 }
 
 // Whitespace decoration for bulk gap expands is deferred so the first paint
-// after click stays cheap; glyphs land in idle/rAF chunks afterward.
+// after click stays cheap; glyphs land in idle/rAF chunks afterward. Chunks
+// are time-budgeted and cancelable so a later small gap toggle is not stuck
+// behind a stale whole-file decorate job.
 let wsDecorateRaf = 0;
+let wsDecorateIdle = 0;
 const wsDecorateQueue = [];
+
+function cancelWsDecoratePump() {
+  if (wsDecorateRaf) {
+    cancelAnimationFrame(wsDecorateRaf);
+    wsDecorateRaf = 0;
+  }
+  if (wsDecorateIdle && typeof cancelIdleCallback === "function") {
+    cancelIdleCallback(wsDecorateIdle);
+    wsDecorateIdle = 0;
+  }
+}
+
+function scheduleWsDecoratePump() {
+  if (wsDecorateRaf || wsDecorateIdle || !wsDecorateQueue.length) return;
+  if (typeof requestIdleCallback === "function") {
+    wsDecorateIdle = requestIdleCallback((deadline) => {
+      wsDecorateIdle = 0;
+      flushWsDecorateChunk(deadline);
+    }, { timeout: 120 });
+  } else {
+    wsDecorateRaf = requestAnimationFrame(() => {
+      wsDecorateRaf = 0;
+      flushWsDecorateChunk(null);
+    });
+  }
+}
 
 function enqueueWsDecorate(content, ending) {
   if (!content) return;
@@ -1613,14 +1803,20 @@ function enqueueWsDecorate(content, ending) {
   if (ending === "crlf" || ending === "lf") content.dataset.wsEnding = ending;
   else delete content.dataset.wsEnding;
   wsDecorateQueue.push(content);
-  if (!wsDecorateRaf) wsDecorateRaf = requestAnimationFrame(flushWsDecorateChunk);
+  scheduleWsDecoratePump();
 }
 
-function flushWsDecorateChunk() {
-  wsDecorateRaf = 0;
-  const budget = 96;
+function flushWsDecorateChunk(deadline) {
+  const started = performance.now();
+  const timeBudget = 6; // ms — keep post-toggle frames interactive
   let n = 0;
-  while (n < budget && wsDecorateQueue.length) {
+  while (wsDecorateQueue.length) {
+    if (n > 0) {
+      const outOfTime = deadline && typeof deadline.timeRemaining === "function"
+        ? deadline.timeRemaining() <= 0
+        : performance.now() - started >= timeBudget;
+      if (outOfTime) break;
+    }
     const content = wsDecorateQueue.shift();
     if (!content || !content.isConnected || content.dataset.wsPending !== "1") continue;
     const ending = content.dataset.wsEnding || "";
@@ -1633,7 +1829,7 @@ function flushWsDecorateChunk() {
     ensureSelectionPad(content);
     n++;
   }
-  if (wsDecorateQueue.length) wsDecorateRaf = requestAnimationFrame(flushWsDecorateChunk);
+  if (wsDecorateQueue.length) scheduleWsDecoratePump();
 }
 
 function fillGapTextContent(content, text, ending, lazyWs) {
@@ -1788,6 +1984,7 @@ function renderSideBySide(rows, file) {
   view.append(leftPane, rightPane);
   const scroll = el("div", "diff-scroll");
   scroll.appendChild(view);
+  scroll._sochaFile = file;
   scroll.addEventListener("copy", (event) => copyDiffSelection(event, scroll, file));
   return scroll;
 }
@@ -1839,6 +2036,7 @@ function renderUnified(rows, file) {
   table.appendChild(body);
   const scroll = el("div", "diff-scroll");
   scroll.appendChild(table);
+  scroll._sochaFile = file;
   scroll.addEventListener("copy", (event) => copyDiffSelection(event, scroll, file));
   return scroll;
 }
@@ -1881,6 +2079,7 @@ function buildFileDiffBody(details, file) {
   let scrollGroupMembers = [];
   let panMaxScrolls = [];
   let panMaxColumns = [];
+  let panGrowthRafs = [];
   let isSideBySide = false;
   // Direct references keep a gap click O(gap): resolving the marker in each
   // pane must not query through every row in a large file.
@@ -1941,11 +2140,13 @@ function buildFileDiffBody(details, file) {
   }
 
   function sizePanScrolls() {
+    pruneScrollGroups();
     panBars.forEach((panScroll, index) => {
       const textContents = scrollGroups[index] || [];
       let maxScroll = 0;
       let maxColumns = 0;
       for (const textContent of textContents) {
+        if (!textContent.isConnected) continue;
         maxScroll = Math.max(maxScroll, textContent.scrollWidth - textContent.clientWidth);
         maxColumns = Math.max(maxColumns, displayColumns(textContent));
       }
@@ -1956,10 +2157,30 @@ function buildFileDiffBody(details, file) {
     });
   }
 
+  // Drop detached .text-content nodes so pan scroll / resize never walks a
+  // whole-file list of stale nodes after collapse (O(file) transform/scrollWidth).
+  function pruneScrollGroups() {
+    scrollGroups = scrollGroups.map((group) => {
+      const next = [];
+      for (const content of group || []) {
+        if (content && content.isConnected) next.push(content);
+      }
+      return next;
+    });
+    scrollGroupMembers = scrollGroups.map((group) => new WeakSet(group));
+  }
+
+  function cancelPanGrowthRafs() {
+    for (const id of panGrowthRafs) cancelAnimationFrame(id);
+    panGrowthRafs = [];
+  }
+
   // A small gap almost never changes horizontal overflow. Compare its lines to
   // the longest line already measured; only a new longest line gets a bounded
   // post-paint measurement. Collapse deliberately keeps the prior maximum.
+  // Never rescans the whole file's scrollWidth.
   function schedulePanGrowth(addedGroups) {
+    cancelPanGrowthRafs();
     addedGroups.forEach((contents, index) => {
       let newMaxColumns = panMaxColumns[index] || 0;
       const candidates = [];
@@ -1975,7 +2196,8 @@ function buildFileDiffBody(details, file) {
       }
       if (!candidates.length) return;
       panMaxColumns[index] = newMaxColumns;
-      requestAnimationFrame(() => {
+      const raf = requestAnimationFrame(() => {
+        panGrowthRafs = panGrowthRafs.filter((id) => id !== raf);
         const panScroll = panBars[index];
         if (!panScroll) return;
         let maxScroll = panMaxScrolls[index] || 0;
@@ -1988,6 +2210,7 @@ function buildFileDiffBody(details, file) {
         if (isSideBySide) panScroll.hidden = maxScroll <= 0;
         panScroll.firstElementChild.style.width = `${maxScroll + panScroll.clientWidth}px`;
       });
+      panGrowthRafs.push(raf);
     });
   }
 
@@ -2142,13 +2365,19 @@ function buildFileDiffBody(details, file) {
     }
 
     proximityGapIndices.delete(gapIndex);
-    if (willExpand) schedulePanGrowth(addedPanContents);
+    if (!willExpand) {
+      cancelPanGrowthRafs();
+      pruneScrollGroups();
+    } else {
+      schedulePanGrowth(addedPanContents);
+    }
     return true;
   }
 
   function render() {
     gapRowsByIndex.clear();
     gapDomCache.clear();
+    cancelPanGrowthRafs();
     if (currentResize) {
       window.removeEventListener("resize", currentResize);
       resizeHandlers = resizeHandlers.filter((handler) => handler !== currentResize);
@@ -2183,8 +2412,11 @@ function buildFileDiffBody(details, file) {
 
       panScroll.addEventListener("scroll", () => {
         const offset = panScroll.scrollLeft;
-        for (const textContent of scrollGroups[index] || []) {
-          textContent.style.transform = `translateX(-${offset}px)`;
+        const group = scrollGroups[index] || [];
+        for (let i = 0; i < group.length; i++) {
+          const textContent = group[i];
+          if (!textContent.isConnected) continue;
+          textContent.style.transform = offset ? `translateX(-${offset}px)` : "";
         }
       });
     });

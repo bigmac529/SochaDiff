@@ -1323,10 +1323,33 @@ async function main() {
     await runScenario("whole-pane contextmenu copy includes collapsed gaps", async () => {
       await clearNativeSelection(page);
       const textPt = await centerOfRow(page, "left", firstText, FILE);
-      // Right-click selects the whole pane (A) so Copy includes collapsed gap lines.
+      // Custom context menu: right-click selects whole pane, Copy runs copyDiffSelection.
       await page.mouse.click(textPt.x, textPt.y, { button: "right" });
       await sleep(50);
-      const copied = await copySelectionText(page);
+      const menuVisible = await page.locator(".diff-context-menu").count();
+      assert("custom context menu is shown", menuVisible === 1, `menus=${menuVisible}`);
+      const menuOnlyCopy = await page.evaluate(() => {
+        const menu = document.querySelector(".diff-context-menu");
+        if (!menu) return null;
+        const items = Array.from(menu.querySelectorAll(".diff-context-menu-item")).map(
+          (el) => (el.textContent || "").trim()
+        );
+        return items;
+      });
+      assert(
+        "custom context menu is Copy-only",
+        Array.isArray(menuOnlyCopy) && menuOnlyCopy.length === 1 && menuOnlyCopy[0] === "Copy",
+        JSON.stringify(menuOnlyCopy)
+      );
+      await page.locator(".diff-context-menu-item").click();
+      await sleep(50);
+      const copied = await page.evaluate(async () => {
+        try {
+          return await navigator.clipboard.readText();
+        } catch {
+          return window.getSelection()?.toString() || "";
+        }
+      });
       assert(
         "whole-pane copy includes leading collapsed line 1",
         /line 1/.test(copied || ""),
@@ -1346,10 +1369,27 @@ async function main() {
         "whole-pane copy stays single-pane (no CHANGED B)",
         !/CHANGED B/.test(copied || "")
       );
-      // Dismiss any native menu side-effects for later scenarios.
+      const menusAfter = await page.locator(".diff-context-menu").count();
+      assert("custom context menu dismisses after Copy", menusAfter === 0, `menus=${menusAfter}`);
       await page.keyboard.press("Escape").catch(() => {});
       await page.mouse.click(5, 5).catch(() => {});
       await sleep(30);
+    });
+
+    await runScenario("custom context menu dismisses on Escape and outside click", async () => {
+      await clearNativeSelection(page);
+      const textPt = await centerOfRow(page, "left", firstText, FILE);
+      await page.mouse.click(textPt.x, textPt.y, { button: "right" });
+      await sleep(40);
+      assert("menu opens for dismiss test", (await page.locator(".diff-context-menu").count()) === 1);
+      await page.keyboard.press("Escape");
+      await sleep(40);
+      assert("Escape dismisses custom menu", (await page.locator(".diff-context-menu").count()) === 0);
+      await page.mouse.click(textPt.x, textPt.y, { button: "right" });
+      await sleep(40);
+      await page.mouse.click(5, 5);
+      await sleep(40);
+      assert("outside click dismisses custom menu", (await page.locator(".diff-context-menu").count()) === 0);
     });
 
     // Chromium triple-click selects a line but often paints the next row's
@@ -2351,6 +2391,108 @@ async function main() {
     });
 
 
+    await runScenario("first file-diff in view: arm/select leading collapsed gap", async () => {
+      // Keep every file open so big.txt is the first/top .file-diff (not solo-opened).
+      await page.goto(
+        `${baseUrl}/?a=${encodeURIComponent(SEL_A)}&b=${encodeURIComponent(SEL_B)}&run=1`,
+        { waitUntil: "networkidle" }
+      );
+      await page.waitForSelector(".file-diff", { timeout: 15000 });
+      await page.evaluate(() => {
+        document.querySelectorAll("details.file-diff").forEach((d) => {
+          d.open = true;
+        });
+      });
+      await page.waitForSelector("details.file-diff .select-scope .text-content", { timeout: 10000 });
+      await sleep(150);
+
+      const firstMeta = await page.evaluate(() => {
+        const details = document.querySelector("details.file-diff");
+        const name = ((details && details.querySelector(".name")) || {}).textContent || "";
+        const left = details && details.querySelector(".left-pane.select-scope");
+        const rows = left ? Array.from(left.querySelectorAll("tbody > tr")) : [];
+        const topGap = rows.findIndex(
+          (tr) => tr.classList.contains("gap-toggle") && tr.dataset.expanded !== "true"
+        );
+        const firstText = rows.findIndex((tr) => tr.querySelector(".text-content"));
+        return { name, topGap, firstText, fileCount: document.querySelectorAll("details.file-diff").length };
+      });
+      assert(
+        "first file-diff is big.txt with a leading gap",
+        !!(firstMeta && firstMeta.name === "big.txt" && firstMeta.topGap === 0 && firstMeta.firstText > 0),
+        JSON.stringify(firstMeta)
+      );
+      if (!firstMeta || firstMeta.topGap !== 0) return;
+
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await sleep(50);
+
+      // Shift+gap arm on the first file while other files remain open below.
+      const textPt = await centerOfRow(page, "left", firstMeta.firstText, "big.txt");
+      const gapPt = await centerOfRow(page, "left", firstMeta.topGap, "big.txt");
+      await page.mouse.click(textPt.x, textPt.y);
+      await sleep(30);
+      await page.keyboard.down("Shift");
+      await page.mouse.click(gapPt.x, gapPt.y);
+      await page.keyboard.up("Shift");
+      await sleep(80);
+      let snap = await paneSnapshot(page, "left", "big.txt");
+      assert(
+        "first-file Shift+gap arms leading collapsed gap",
+        !!(snap && snap.gapArmed && snap.gapArmed.includes(firstMeta.topGap)),
+        `armed=${snap && snap.gapArmed}`
+      );
+
+      await clearNativeSelection(page);
+      // Drag-arm: full neighbor → onto leading gap (and slightly into summary chrome).
+      const start = await edgeOfRow(page, "left", firstMeta.firstText, "end", "big.txt");
+      const end = await edgeOfRow(page, "left", firstMeta.firstText, "start", "big.txt");
+      const summaryPt = await page.evaluate(() => {
+        const details = document.querySelector("details.file-diff");
+        const sum = details && details.querySelector("summary");
+        const gap = details && details.querySelector(".left-pane tr.gap-toggle");
+        if (!sum || !gap) return null;
+        const sb = sum.getBoundingClientRect();
+        const gb = gap.getBoundingClientRect();
+        return { x: gb.left + 20, y: sb.top + sb.height / 2 };
+      });
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 6 });
+      await page.mouse.move(gapPt.x, gapPt.y, { steps: 8 });
+      await sleep(40);
+      snap = await paneSnapshot(page, "left", "big.txt");
+      assert(
+        "first-file drag onto gap arms leading collapsed gap",
+        !!(snap && snap.gapArmed && snap.gapArmed.includes(firstMeta.topGap)),
+        `armed=${snap && snap.gapArmed}`
+      );
+      if (summaryPt) {
+        await page.mouse.move(summaryPt.x, summaryPt.y, { steps: 6 });
+        await sleep(40);
+        snap = await paneSnapshot(page, "left", "big.txt");
+        assert(
+          "first-file summary-chrome still arms leading gap",
+          !!(snap && snap.gapArmed && snap.gapArmed.includes(firstMeta.topGap)),
+          `armed=${snap && snap.gapArmed}`
+        );
+      }
+      await page.mouse.up();
+      await sleep(40);
+      snap = await paneSnapshot(page, "left", "big.txt");
+      assert(
+        "first-file leading gap stays armed after mouseup",
+        !!(snap && snap.gapArmed && snap.gapArmed.includes(firstMeta.topGap)),
+        `armed=${snap && snap.gapArmed}`
+      );
+      const copied = await copySelectionText(page);
+      assert(
+        "first-file armed-gap copy includes hidden line 1",
+        /line 1/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 100))}`
+      );
+    });
+
     await runScenario("4-line gap toggle in a large file stays under 100ms", async () => {
       const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "socha-small-gap-"));
       const dirA = path.join(tmpRoot, "a");
@@ -2454,6 +2596,44 @@ async function main() {
           "4-line gap click handler under 50ms",
           !!(timed && timed.expand1 && timed.expand1.syncMs < 50 && timed.collapse1 && timed.collapse1.syncMs < 50),
           JSON.stringify(timed)
+        );
+
+        // After the click returns, pointer frames must stay interactive (no multi-second
+        // main-thread hang from stale pan/WS jobs or whole-file scrollWidth scans).
+        const after = await page.evaluate(async () => {
+          const left = document.querySelector(".left-pane.select-scope");
+          const g = left && Array.from(left.querySelectorAll("tr.gap-toggle")).find((row) =>
+            /4 unchanged/.test(row.textContent || "")
+          );
+          if (!g) return null;
+          const fire = (type) =>
+            g.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 }));
+          fire("mousedown");
+          fire("mouseup");
+          fire("click");
+          const moveCosts = [];
+          const t0 = performance.now();
+          while (performance.now() - t0 < 800) {
+            const m0 = performance.now();
+            document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 40, clientY: 40 }));
+            moveCosts.push(performance.now() - m0);
+            await new Promise((r) => requestAnimationFrame(r));
+          }
+          moveCosts.sort((a, b) => b - a);
+          return {
+            moveMax: moveCosts[0] || 0,
+            moveP95: moveCosts[Math.floor(moveCosts.length * 0.05)] || 0,
+            samples: moveCosts.length,
+          };
+        });
+        log(
+          `  · post-toggle mousemove max=${(after && after.moveMax || 0).toFixed(2)}ms` +
+            ` p95=${(after && after.moveP95 || 0).toFixed(2)}ms n=${after && after.samples}`
+        );
+        assert(
+          "post-toggle mousemove stays under 16ms",
+          !!(after && after.moveMax < 16),
+          JSON.stringify(after)
         );
       } finally {
         try {
