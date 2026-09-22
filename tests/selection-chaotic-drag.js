@@ -1709,6 +1709,135 @@ async function main() {
       await clearNativeSelection(page);
     });
 
+    await runScenario("gap expand/collapse keeps panes aligned without full rebuild", async () => {
+      await clearNativeSelection(page);
+      const topGap = gaps.find((g) => g < firstText);
+      assert("leading gap for expand/collapse", topGap != null, `gaps=${gaps}`);
+      if (topGap == null) return;
+
+      const before = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        if (!details) return null;
+        const leftRows = details.querySelectorAll(".left-pane tbody > tr").length;
+        const rightRows = details.querySelectorAll(".right-pane tbody > tr").length;
+        const scroll = details.querySelector(".diff-scroll");
+        return { leftRows, rightRows, scrollId: scroll && (scroll._testId = scroll._testId || Math.random()) };
+      }, FILE);
+
+      const gapPt = await centerOfRow(page, "left", topGap, FILE);
+      assert("expand gap point", !!gapPt, JSON.stringify(gapPt));
+      if (!gapPt) return;
+      await page.mouse.click(gapPt.x, gapPt.y);
+      await sleep(80);
+
+      const expanded = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        if (!details) return null;
+        const left = Array.from(details.querySelectorAll(".left-pane tbody > tr"));
+        const right = Array.from(details.querySelectorAll(".right-pane tbody > tr"));
+        const gapTr = left.find((tr) => tr.classList.contains("gap-toggle") && tr.dataset.expanded === "true");
+        const scroll = details.querySelector(".diff-scroll");
+        // Count revealed equal rows after the expanded marker until the next gap-toggle/non-equal.
+        let revealed = 0;
+        if (gapTr) {
+          let sib = gapTr.nextElementSibling;
+          while (sib && !sib.classList.contains("gap-toggle") && sib.classList.contains("equal")) {
+            revealed++;
+            sib = sib.nextElementSibling;
+          }
+        }
+        return {
+          leftRows: left.length,
+          rightRows: right.length,
+          expanded: !!(gapTr && gapTr.dataset.expanded === "true"),
+          label: gapTr ? gapTr.textContent : "",
+          revealed,
+          sameScroll: !!(scroll && beforeScrollMatch(scroll)),
+        };
+        function beforeScrollMatch(scroll) {
+          return typeof scroll._testId === "number";
+        }
+      }, FILE);
+
+      assert("gap expands", expanded && expanded.expanded, JSON.stringify(expanded));
+      assert(
+        "expand keeps left/right row counts equal",
+        expanded && expanded.leftRows === expanded.rightRows,
+        JSON.stringify(expanded)
+      );
+      assert(
+        "expand inserts hidden equal rows",
+        expanded && expanded.revealed > 0 && expanded.leftRows > before.leftRows,
+        JSON.stringify({ before, expanded })
+      );
+      assert(
+        "expand reuses diff-scroll (incremental)",
+        expanded && expanded.sameScroll,
+        JSON.stringify(expanded)
+      );
+      assert(
+        "expanded marker says click to hide",
+        expanded && /click to hide/.test(expanded.label || ""),
+        JSON.stringify(expanded && expanded.label)
+      );
+
+      // Collapse via the same marker (row index may have shifted; click by label).
+      const hidePt = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        const gapTr =
+          details &&
+          details.querySelector(".left-pane tr.gap-toggle[data-expanded='true']");
+        if (!gapTr) return null;
+        const r = gapTr.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }, FILE);
+      assert("collapse gap point", !!hidePt, JSON.stringify(hidePt));
+      if (!hidePt) return;
+      await page.mouse.click(hidePt.x, hidePt.y);
+      await sleep(80);
+
+      const after = await page.evaluate((fileName) => {
+        const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+          (d) => ((d.querySelector(".name") || {}).textContent || "") === fileName
+        );
+        if (!details) return null;
+        const left = Array.from(details.querySelectorAll(".left-pane tbody > tr"));
+        const right = Array.from(details.querySelectorAll(".right-pane tbody > tr"));
+        const anyExpanded = left.some((tr) => tr.dataset.expanded === "true");
+        const scroll = details.querySelector(".diff-scroll");
+        return {
+          leftRows: left.length,
+          rightRows: right.length,
+          anyExpanded,
+          sameScroll: !!(scroll && typeof scroll._testId === "number"),
+        };
+      }, FILE);
+
+      assert("gap collapses", after && !after.anyExpanded, JSON.stringify(after));
+      assert(
+        "collapse restores row counts",
+        after && after.leftRows === before.leftRows && after.rightRows === before.rightRows,
+        JSON.stringify({ before, after })
+      );
+      assert(
+        "collapse keeps left/right aligned",
+        after && after.leftRows === after.rightRows,
+        JSON.stringify(after)
+      );
+      assert(
+        "collapse reuses diff-scroll (incremental)",
+        after && after.sameScroll,
+        JSON.stringify(after)
+      );
+      await clearNativeSelection(page);
+    });
+
     await runScenario("Shift+text click keeps drag anchor for later Shift+gutter", async () => {
       await clearNativeSelection(page);
       const early = textRows[0];
