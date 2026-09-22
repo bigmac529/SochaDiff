@@ -511,11 +511,15 @@ function selectWholeLineRange(scope, fromIdx, toIdx) {
 }
 
 document.addEventListener("mousedown", (event) => {
-  // Plain gap clicks are expand/collapse controls, not selection gestures.
-  // Bail out before any pane-wide row enumeration / selection cleanup: on a
-  // multi-thousand-line diff those O(file) queries made a four-line toggle
-  // block before the incremental splice even ran. Preventing the native
-  // mousedown also avoids a selectionchange storm when gap chrome is clicked.
+  const prevScope = selectionScope;
+  const prevAnchor = dragAnchorRowIndex;
+  const targetScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
+
+  // Plain gap clicks are expand/collapse controls, not selection gestures. Keep
+  // the toggle O(gap), but do not return before transferring selection ownership
+  // to the clicked pane and resetting gesture state. Skipping that O(1) setup
+  // left selectionScope pointing at the previous pane, so later Shift+gap and
+  // drag/spanned-gap paint were evaluated against stale pane state.
   const plainGapToggle =
     event.button === 0 &&
     !event.shiftKey &&
@@ -523,14 +527,22 @@ document.addEventListener("mousedown", (event) => {
     event.target.closest("tr.gap-toggle[data-gap-index]");
   if (plainGapToggle) {
     event.preventDefault();
+    selectionScope = targetScope;
+    wholeFileScope = null;
+    // A real click arrives after the previous mouseup, so keep this branch O(1).
+    // Only run the broader inert-state cleanup for an abnormal overlapping drag.
+    if (dragSelecting) endDragSelecting();
+    else {
+      gutterLineDrag = false;
+      dragPanScroll = null;
+    }
+    dragAnchorRowIndex = -1;
     const gapIndex = Number(plainGapToggle.dataset.gapIndex);
     if (!Number.isNaN(gapIndex)) proximityGapIndices.delete(gapIndex);
     return;
   }
 
-  const prevScope = selectionScope;
-  const prevAnchor = dragAnchorRowIndex;
-  selectionScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
+  selectionScope = targetScope;
   wholeFileScope = null;
   // Same-scope Shift+extend keeps proximity-armed edge gaps; a fresh click
   // (or pane switch) starts a new selection and clears them.

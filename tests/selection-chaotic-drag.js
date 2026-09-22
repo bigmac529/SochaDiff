@@ -2126,6 +2126,105 @@ async function main() {
           `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 120))}`
         );
       });
+
+      await runScenario("text drag across collapsed gap keeps pane selection and gap paint", async () => {
+        if (interiorGap == null) return;
+        const above = [...spanText].reverse().find((t) => t < interiorGap);
+        const below = spanText.find((t) => t > interiorGap);
+        assert("text-span neighbors present", above != null && below != null, JSON.stringify({ above, below }));
+        if (above == null || below == null) return;
+        await clearNativeSelection(page);
+        const points = await page.evaluate(
+          ({ gapIdx, aboveIdx, belowIdx, file }) => {
+            const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+              (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+            );
+            const pane = details && details.querySelector(".left-pane.select-scope");
+            const rows = pane ? Array.from(pane.querySelectorAll("tbody > tr")) : [];
+            const aboveTc = rows[aboveIdx] && rows[aboveIdx].querySelector(".text-content");
+            const belowTc = rows[belowIdx] && rows[belowIdx].querySelector(".text-content");
+            const gap = rows[gapIdx];
+            if (!aboveTc || !belowTc || !gap) return null;
+            const startBox = aboveTc.getBoundingClientRect();
+            const endRange = document.createRange();
+            endRange.selectNodeContents(belowTc);
+            const endRects = Array.from(endRange.getClientRects());
+            const endBox = endRects[endRects.length - 1] || belowTc.getBoundingClientRect();
+            const gapBox = gap.getBoundingClientRect();
+            return {
+              modelGapIndex: Number(gap.dataset.gapIndex),
+              start: { x: startBox.left + 1, y: (startBox.top + startBox.bottom) / 2 },
+              gap: { x: gapBox.left + Math.min(40, gapBox.width / 2), y: (gapBox.top + gapBox.bottom) / 2 },
+              end: { x: endBox.right + 2, y: (endBox.top + endBox.bottom) / 2 },
+            };
+          },
+          { gapIdx: interiorGap, aboveIdx: above, belowIdx: below, file: SPAN_FILE }
+        );
+        assert("text-span drag points present", !!points, JSON.stringify(points));
+        if (!points) return;
+        await chaoticDrag(page, [points.start, points.gap, points.end]);
+        const leftSpan = await paneSnapshot(page, "left", SPAN_FILE);
+        const rightSpan = await paneSnapshot(page, "right", SPAN_FILE);
+        assert(
+          "text-span gap stays painted after pointer leaves it",
+          leftSpan.gapArmed.includes(interiorGap),
+          `armed=${leftSpan.gapArmed} selected=${JSON.stringify((leftSpan.selectedText || "").slice(0, 120))}`
+        );
+        assert("text-span keeps native selection in left pane", leftSpan.selectedInPane);
+        assert(
+          "text-span keeps both visible neighbors selected",
+          /line 8/.test(leftSpan.selectedText || "") && /line 12/.test(leftSpan.selectedText || ""),
+          JSON.stringify(leftSpan.selectedText || "")
+        );
+        assert(
+          "text-span selection does not bleed into right pane",
+          !rightSpan.selectedInPane && rightSpan.gapArmed.length === 0,
+          JSON.stringify(rightSpan)
+        );
+
+        await clearNativeSelection(page);
+        const gapPoint = await centerOfRow(page, "left", interiorGap, SPAN_FILE);
+        const beforeRows = leftSpan.rowCount;
+        await page.mouse.click(gapPoint.x, gapPoint.y);
+        const expanded = await paneSnapshot(page, "left", SPAN_FILE);
+        const expandedState = await page.evaluate(
+          ({ modelGapIndex, file }) => {
+            const details = Array.from(document.querySelectorAll("details.file-diff")).find(
+              (d) => ((d.querySelector(".name") || {}).textContent || "") === file
+            );
+            const gaps = details ? Array.from(details.querySelectorAll(".left-pane tr.gap-toggle")) : [];
+            const gap = gaps.find((tr) => Number(tr.dataset.gapIndex) === modelGapIndex);
+            return gap ? gap.dataset.expanded : null;
+          },
+          { modelGapIndex: points.modelGapIndex, file: SPAN_FILE }
+        );
+        assert(
+          "plain click still expands collapsed gap",
+          expandedState === "true" && expanded.rowCount > beforeRows,
+          JSON.stringify({ expandedState, beforeRows, afterRows: expanded.rowCount })
+        );
+
+        // Collapse from the opposite pane, then Shift+click that collapsed gap.
+        // The plain fast-path mousedown must still transfer selection ownership
+        // to the clicked pane; otherwise the following Shift+gap cannot arm.
+        const rightGapPoint = await centerOfRow(page, "right", interiorGap, SPAN_FILE);
+        await page.mouse.click(rightGapPoint.x, rightGapPoint.y);
+        await page.keyboard.down("Shift");
+        await page.mouse.click(rightGapPoint.x, rightGapPoint.y);
+        await page.keyboard.up("Shift");
+        const rightAfterShift = await paneSnapshot(page, "right", SPAN_FILE);
+        const leftAfterShift = await paneSnapshot(page, "left", SPAN_FILE);
+        assert(
+          "plain gap fast path preserves pane ownership for Shift+gap",
+          rightAfterShift.gapArmed.includes(interiorGap),
+          `right armed=${rightAfterShift.gapArmed} left armed=${leftAfterShift.gapArmed}`
+        );
+        assert(
+          "Shift+gap after plain toggle stays in clicked pane",
+          leftAfterShift.gapArmed.length === 0 && rightAfterShift.selectedInPane,
+          JSON.stringify({ leftAfterShift, rightAfterShift })
+        );
+      });
     }
 
     // ── blank-a / blank-b: blank-row marks ───────────────────────────────
