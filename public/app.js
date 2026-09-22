@@ -511,6 +511,23 @@ function selectWholeLineRange(scope, fromIdx, toIdx) {
 }
 
 document.addEventListener("mousedown", (event) => {
+  // Plain gap clicks are expand/collapse controls, not selection gestures.
+  // Bail out before any pane-wide row enumeration / selection cleanup: on a
+  // multi-thousand-line diff those O(file) queries made a four-line toggle
+  // block before the incremental splice even ran. Preventing the native
+  // mousedown also avoids a selectionchange storm when gap chrome is clicked.
+  const plainGapToggle =
+    event.button === 0 &&
+    !event.shiftKey &&
+    event.target instanceof Element &&
+    event.target.closest("tr.gap-toggle[data-gap-index]");
+  if (plainGapToggle) {
+    event.preventDefault();
+    const gapIndex = Number(plainGapToggle.dataset.gapIndex);
+    if (!Number.isNaN(gapIndex)) proximityGapIndices.delete(gapIndex);
+    return;
+  }
+
   const prevScope = selectionScope;
   const prevAnchor = dragAnchorRowIndex;
   selectionScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
@@ -1849,7 +1866,13 @@ function buildFileDiffBody(details, file) {
   // scrollbars / listeners on every expand-collapse.
   let panBars = [];
   let scrollGroups = [];
+  let scrollGroupMembers = [];
+  let panMaxScrolls = [];
+  let panMaxColumns = [];
   let isSideBySide = false;
+  // Direct references keep a gap click O(gap): resolving the marker in each
+  // pane must not query through every row in a large file.
+  const gapRowsByIndex = new Map();
 
   // Expand any clicked gaps by splicing their omitted rows back in.
   function effectiveRows() {
@@ -1876,28 +1899,83 @@ function buildFileDiffBody(details, file) {
     } else {
       scrollGroups = [Array.from(details.querySelectorAll(".text-content"))];
     }
+    scrollGroupMembers = scrollGroups.map((group) => new WeakSet(group));
+    panMaxScrolls = scrollGroups.map(() => 0);
+    panMaxColumns = scrollGroups.map(() => 0);
   }
 
-  function applyPanOffsets() {
-    panBars.forEach((panScroll, index) => {
-      const offset = panScroll.scrollLeft;
-      if (!offset) return;
-      const textContents = scrollGroups[index] || [];
-      for (const textContent of textContents) {
-        textContent.style.transform = `translateX(-${offset}px)`;
+  function displayColumns(content) {
+    const text = lineTextFromContent(content);
+    let columns = 0;
+    for (const char of text) columns = char === "\t" ? columns + (8 - (columns % 8)) : columns + 1;
+    return columns;
+  }
+
+  // Register only newly inserted gap rows. The initial whole-file groups are
+  // built once by render(); toggles extend them without querying the file.
+  function registerPanContents(frag, sideIndex) {
+    const added = [];
+    if (!frag || !frag.querySelectorAll) return added;
+    const group = scrollGroups[sideIndex] || (scrollGroups[sideIndex] = []);
+    const members = scrollGroupMembers[sideIndex] || (scrollGroupMembers[sideIndex] = new WeakSet());
+    for (const content of frag.querySelectorAll(".text-content")) {
+      added.push(content);
+      if (!members.has(content)) {
+        members.add(content);
+        group.push(content);
       }
-    });
+    }
+    return added;
   }
 
   function sizePanScrolls() {
     panBars.forEach((panScroll, index) => {
       const textContents = scrollGroups[index] || [];
-      const maxScroll = textContents.reduce(
-        (maximum, textContent) => Math.max(maximum, textContent.scrollWidth - textContent.clientWidth),
-        0
-      );
+      let maxScroll = 0;
+      let maxColumns = 0;
+      for (const textContent of textContents) {
+        maxScroll = Math.max(maxScroll, textContent.scrollWidth - textContent.clientWidth);
+        maxColumns = Math.max(maxColumns, displayColumns(textContent));
+      }
+      panMaxScrolls[index] = maxScroll;
+      panMaxColumns[index] = maxColumns;
       if (isSideBySide) panScroll.hidden = maxScroll <= 0;
       panScroll.firstElementChild.style.width = `${maxScroll + panScroll.clientWidth}px`;
+    });
+  }
+
+  // A small gap almost never changes horizontal overflow. Compare its lines to
+  // the longest line already measured; only a new longest line gets a bounded
+  // post-paint measurement. Collapse deliberately keeps the prior maximum.
+  function schedulePanGrowth(addedGroups) {
+    addedGroups.forEach((contents, index) => {
+      let newMaxColumns = panMaxColumns[index] || 0;
+      const candidates = [];
+      for (const content of contents) {
+        const columns = displayColumns(content);
+        if (columns > newMaxColumns) {
+          newMaxColumns = columns;
+          candidates.length = 0;
+          candidates.push(content);
+        } else if (columns === newMaxColumns && columns > (panMaxColumns[index] || 0)) {
+          candidates.push(content);
+        }
+      }
+      if (!candidates.length) return;
+      panMaxColumns[index] = newMaxColumns;
+      requestAnimationFrame(() => {
+        const panScroll = panBars[index];
+        if (!panScroll) return;
+        let maxScroll = panMaxScrolls[index] || 0;
+        for (const content of candidates) {
+          if (content.isConnected) {
+            maxScroll = Math.max(maxScroll, content.scrollWidth - content.clientWidth);
+          }
+        }
+        panMaxScrolls[index] = maxScroll;
+        if (isSideBySide) panScroll.hidden = maxScroll <= 0;
+        panScroll.firstElementChild.style.width = `${maxScroll + panScroll.clientWidth}px`;
+      });
     });
   }
 
@@ -1919,14 +1997,6 @@ function buildFileDiffBody(details, file) {
     return frag;
   }
 
-  function schedulePanRefresh() {
-    requestAnimationFrame(() => {
-      refreshScrollGroups();
-      applyPanOffsets();
-      sizePanScrolls();
-    });
-  }
-
   function applyPanToFragmentRows(frag, sideIndex) {
     const offset = (panBars[sideIndex] && panBars[sideIndex].scrollLeft) || 0;
     if (!offset) return;
@@ -1937,33 +2007,37 @@ function buildFileDiffBody(details, file) {
     }
   }
 
-  function toggleGapInPlace(gapIndex) {
+  function rememberGapRow(gapIndex, side, gapTr) {
+    const entry = gapRowsByIndex.get(gapIndex) || {};
+    entry[side || "unified"] = gapTr;
+    gapRowsByIndex.set(gapIndex, entry);
+  }
+
+  function toggleGapInPlace(gapIndex, clickedGapTr) {
     const gapModel = file.rows[gapIndex];
     if (!gapModel || gapModel.type !== "gap" || !Array.isArray(gapModel.rows)) return false;
-    const scroll = details.querySelector(".diff-scroll");
+    const scroll = details.querySelector(":scope > .diff-scroll");
     if (!scroll) return false;
 
     const willExpand = !expanded.has(gapIndex);
     const gapMeta = { type: "gap", count: gapModel.count, gapIndex, expanded: willExpand };
     const hidden = gapModel.rows;
-    const gapSelector = `tr.gap-toggle[data-gap-index="${gapIndex}"]`;
     const lazyWs = showWhitespace && hidden.length > 12;
 
-    // Resolve every target before mutating so a missing pane falls back cleanly.
-    let targets;
-    if (isSideBySide) {
-      targets = ["left", "right"].map((side) => {
-        const tbody = scroll.querySelector(`.${side}-pane tbody`);
-        const gapTr = tbody && tbody.querySelector(gapSelector);
-        return { side, gapTr };
-      });
-      if (targets.some((t) => !t.gapTr)) return false;
-    } else {
-      const tbody = scroll.querySelector("table.unified-diff tbody");
-      const gapTr = tbody && tbody.querySelector(gapSelector);
-      if (!gapTr) return false;
-      targets = [{ side: null, gapTr }];
+    // The clicked marker is authoritative; its peer comes from the registry
+    // populated at render time and maintained by each incremental replacement.
+    if (clickedGapTr) {
+      const clickedSide = isSideBySide
+        ? clickedGapTr.closest(".right-pane") ? "right" : "left"
+        : null;
+      rememberGapRow(gapIndex, clickedSide, clickedGapTr);
     }
+    const entry = gapRowsByIndex.get(gapIndex) || {};
+    const targets = isSideBySide
+      ? ["left", "right"].map((side) => ({ side, gapTr: entry[side] }))
+      : [{ side: null, gapTr: entry.unified }];
+    if (targets.some(({ gapTr }) => !gapTr || !gapTr.isConnected || !scroll.contains(gapTr))) return false;
+    const addedPanContents = scrollGroups.map(() => []);
 
     if (willExpand) expanded.add(gapIndex);
     else expanded.delete(gapIndex);
@@ -1973,30 +2047,41 @@ function buildFileDiffBody(details, file) {
       if (cached && isSideBySide && cached.left && cached.right) {
         const leftFrag = document.createDocumentFragment();
         const rightFrag = document.createDocumentFragment();
-        leftFrag.appendChild(sideBySideGapRow(gapMeta));
-        rightFrag.appendChild(sideBySideGapRow(gapMeta));
+        const leftGap = sideBySideGapRow(gapMeta);
+        const rightGap = sideBySideGapRow(gapMeta);
+        leftFrag.appendChild(leftGap);
+        rightFrag.appendChild(rightGap);
         leftFrag.appendChild(cached.left);
         rightFrag.appendChild(cached.right);
         requeuePendingWsInFragment(leftFrag);
         requeuePendingWsInFragment(rightFrag);
         applyPanToFragmentRows(leftFrag, 0);
         applyPanToFragmentRows(rightFrag, 1);
+        addedPanContents[0].push(...registerPanContents(leftFrag, 0));
+        addedPanContents[1].push(...registerPanContents(rightFrag, 1));
         targets[0].gapTr.replaceWith(leftFrag);
         targets[1].gapTr.replaceWith(rightFrag);
+        rememberGapRow(gapIndex, "left", leftGap);
+        rememberGapRow(gapIndex, "right", rightGap);
         gapDomCache.delete(gapIndex);
       } else if (cached && !isSideBySide && cached.unified) {
         const frag = document.createDocumentFragment();
-        frag.appendChild(unifiedGapRow(gapMeta));
+        const unifiedGap = unifiedGapRow(gapMeta);
+        frag.appendChild(unifiedGap);
         frag.appendChild(cached.unified);
         requeuePendingWsInFragment(frag);
         applyPanToFragmentRows(frag, 0);
+        addedPanContents[0].push(...registerPanContents(frag, 0));
         targets[0].gapTr.replaceWith(frag);
+        rememberGapRow(gapIndex, null, unifiedGap);
         gapDomCache.delete(gapIndex);
       } else if (isSideBySide) {
         const leftFrag = document.createDocumentFragment();
         const rightFrag = document.createDocumentFragment();
-        leftFrag.appendChild(sideBySideGapRow(gapMeta));
-        rightFrag.appendChild(sideBySideGapRow(gapMeta));
+        const leftGap = sideBySideGapRow(gapMeta);
+        const rightGap = sideBySideGapRow(gapMeta);
+        leftFrag.appendChild(leftGap);
+        rightFrag.appendChild(rightGap);
         for (const row of hidden) {
           if (row.type === "equal") {
             const pair = buildSbsEqualRowPair(row, lazyWs);
@@ -2009,17 +2094,24 @@ function buildFileDiffBody(details, file) {
         }
         applyPanToFragmentRows(leftFrag, 0);
         applyPanToFragmentRows(rightFrag, 1);
+        addedPanContents[0].push(...registerPanContents(leftFrag, 0));
+        addedPanContents[1].push(...registerPanContents(rightFrag, 1));
         targets[0].gapTr.replaceWith(leftFrag);
         targets[1].gapTr.replaceWith(rightFrag);
+        rememberGapRow(gapIndex, "left", leftGap);
+        rememberGapRow(gapIndex, "right", rightGap);
       } else {
         const frag = document.createDocumentFragment();
-        frag.appendChild(unifiedGapRow(gapMeta));
+        const unifiedGap = unifiedGapRow(gapMeta);
+        frag.appendChild(unifiedGap);
         for (const row of hidden) {
           if (row.type === "equal") frag.appendChild(buildUnifiedEqualRow(row, lazyWs));
           else appendUnifiedModelRow(frag, row);
         }
         applyPanToFragmentRows(frag, 0);
+        addedPanContents[0].push(...registerPanContents(frag, 0));
         targets[0].gapTr.replaceWith(frag);
+        rememberGapRow(gapIndex, null, unifiedGap);
       }
     } else {
       // Detach expanded rows into a cache instead of destroying them so a
@@ -2030,17 +2122,21 @@ function buildFileDiffBody(details, file) {
         if (side === "left") stash.left = detached;
         else if (side === "right") stash.right = detached;
         else stash.unified = detached;
-        gapTr.replaceWith(side ? sideBySideGapRow(gapMeta) : unifiedGapRow(gapMeta));
+        const collapsedGap = side ? sideBySideGapRow(gapMeta) : unifiedGapRow(gapMeta);
+        gapTr.replaceWith(collapsedGap);
+        rememberGapRow(gapIndex, side, collapsedGap);
       }
       gapDomCache.set(gapIndex, stash);
     }
 
     proximityGapIndices.delete(gapIndex);
-    schedulePanRefresh();
+    if (willExpand) schedulePanGrowth(addedPanContents);
     return true;
   }
 
   function render() {
+    gapRowsByIndex.clear();
+    gapDomCache.clear();
     if (currentResize) {
       window.removeEventListener("resize", currentResize);
       resizeHandlers = resizeHandlers.filter((handler) => handler !== currentResize);
@@ -2053,6 +2149,12 @@ function buildFileDiffBody(details, file) {
     details.appendChild(scroll);
     const diffTable = scroll.querySelector(".diff-table");
     isSideBySide = diffTable.classList.contains("side-by-side");
+    for (const gapTr of scroll.querySelectorAll("tr.gap-toggle[data-gap-index]")) {
+      const gapIndex = Number(gapTr.dataset.gapIndex);
+      if (Number.isNaN(gapIndex)) continue;
+      const side = isSideBySide ? (gapTr.closest(".right-pane") ? "right" : "left") : null;
+      rememberGapRow(gapIndex, side, gapTr);
+    }
     const panScrolls = el(
       "div",
       isSideBySide ? "diff-pan-scrolls side-by-side" : "diff-pan-scrolls unified"
@@ -2089,7 +2191,7 @@ function buildFileDiffBody(details, file) {
       if (!gapRow || !scroll.contains(gapRow)) return;
       const gapIndex = Number(gapRow.dataset.gapIndex);
       if (Number.isNaN(gapIndex)) return;
-      if (!toggleGapInPlace(gapIndex)) {
+      if (!toggleGapInPlace(gapIndex, gapRow)) {
         // DOM targets missing — flip Set and full-rebuild as a safe fallback.
         if (expanded.has(gapIndex)) expanded.delete(gapIndex);
         else expanded.add(gapIndex);

@@ -2252,6 +2252,119 @@ async function main() {
     });
 
 
+    await runScenario("4-line gap toggle in a large file stays under 100ms", async () => {
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "socha-small-gap-"));
+      const dirA = path.join(tmpRoot, "a");
+      const dirB = path.join(tmpRoot, "b");
+      fs.mkdirSync(dirA);
+      fs.mkdirSync(dirB);
+      const n = 3000;
+      const lines = [];
+      for (let i = 0; i < n; i++) {
+        lines.push(`line ${String(i).padStart(5, "0")} padding content for layout stress`);
+      }
+      fs.writeFileSync(path.join(dirA, "big.txt"), `${lines.join("\n")}\n`);
+      const linesB = lines.slice();
+      // Two hunks 10 equals apart → CONTEXT=3 leaves a 4-line collapsed gap,
+      // plus a ~3k-line trailing gap so the open file is large.
+      linesB[9] = "CHANGED first hunk";
+      linesB[20] = "CHANGED second hunk";
+      fs.writeFileSync(path.join(dirB, "big.txt"), `${linesB.join("\n")}\n`);
+
+      try {
+        await openCompare(page, baseUrl, dirA, dirB, "big.txt");
+        const primed = await page.evaluate(() => {
+          const left = document.querySelector(".left-pane.select-scope");
+          if (!left) return null;
+          const countOf = (g) => Number(((g.textContent || "").match(/(\d+) unchanged/) || [])[1] || 0);
+          const gaps = Array.from(left.querySelectorAll("tr.gap-toggle"));
+          const four = gaps.find((g) => countOf(g) === 4);
+          const large = gaps.slice().sort((a, b) => countOf(b) - countOf(a))[0];
+          if (!large || !four || large === four) {
+            return { four: !!four, large: !!large, labels: gaps.map((g) => (g.textContent || "").trim()) };
+          }
+          large.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+          return {
+            primedRows: left.querySelectorAll("tbody > tr").length,
+            fourLabel: (four.textContent || "").trim(),
+            largeCount: countOf(large),
+          };
+        });
+        assert(
+          "large file primed with a 4-line gap",
+          !!(primed && primed.primedRows > 2000 && /4 unchanged/.test(primed.fourLabel || "")),
+          JSON.stringify(primed)
+        );
+        await new Promise((r) => setTimeout(r, 200));
+
+        const timed = await page.evaluate(async () => {
+          const fire = (type, target) => {
+            target.dispatchEvent(
+              new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 })
+            );
+          };
+          const clickGap = async () => {
+            const left = document.querySelector(".left-pane.select-scope");
+            const g = left && Array.from(left.querySelectorAll("tr.gap-toggle")).find((row) =>
+              /4 unchanged/.test(row.textContent || "")
+            );
+            if (!g) return null;
+            const t0 = performance.now();
+            fire("mousedown", g);
+            fire("mouseup", g);
+            fire("click", g);
+            const syncMs = performance.now() - t0;
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            const after = left && Array.from(left.querySelectorAll("tr.gap-toggle")).find((row) =>
+              /4 unchanged/.test(row.textContent || "")
+            );
+            return {
+              syncMs,
+              untilRafMs: performance.now() - t0,
+              expanded: after ? after.dataset.expanded : null,
+            };
+          };
+          const expand1 = await clickGap();
+          const rows = document.querySelector(".left-pane.select-scope")
+            ? document.querySelector(".left-pane.select-scope").querySelectorAll("tbody > tr").length
+            : 0;
+          const collapse1 = await clickGap();
+          const expand2 = await clickGap();
+          return { expand1, collapse1, expand2, rows };
+        });
+
+        assert("4-line gap timing captured", !!(timed && timed.expand1 && timed.expand1.syncMs != null), JSON.stringify(timed));
+        log(
+          `  · 4-line gap in ${n}-line file (DOM ~${timed.rows} rows)` +
+            ` expand1=${(timed.expand1 && timed.expand1.syncMs || 0).toFixed(1)}ms` +
+            ` (rAF ${(timed.expand1 && timed.expand1.untilRafMs || 0).toFixed(1)}ms)` +
+            ` collapse1=${(timed.collapse1 && timed.collapse1.syncMs || 0).toFixed(1)}ms` +
+            ` expand2=${(timed.expand2 && timed.expand2.syncMs || 0).toFixed(1)}ms`
+        );
+        assert(
+          "4-line expand stays incremental (reveals 4 rows)",
+          !!(timed && timed.expand1 && timed.expand1.expanded === "true" && timed.rows > (primed.primedRows || 0)),
+          JSON.stringify({ primed, timed })
+        );
+        assert(
+          "4-line gap click handler under 100ms",
+          !!(timed && timed.expand1 && timed.expand1.syncMs < 100),
+          JSON.stringify(timed)
+        );
+        assert(
+          "4-line gap click handler under 50ms",
+          !!(timed && timed.expand1 && timed.expand1.syncMs < 50 && timed.collapse1 && timed.collapse1.syncMs < 50),
+          JSON.stringify(timed)
+        );
+      } finally {
+        try {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
     await runScenario("large gap expand/collapse timing (soft)", async () => {
       const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "socha-gap-"));
       const dirA = path.join(tmpRoot, "a");

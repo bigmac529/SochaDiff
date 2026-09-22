@@ -384,8 +384,11 @@ slice, then expanded after each behavior was manually checked:
 - Gap rows carry `data-gap-index` + `.gap-toggle`; clicking expands the omitted `gap.rows`
   in place. `buildFileDiffBody` keeps an `expanded` Set. Initial open uses `effectiveRows()`;
   later toggles splice via `toggleGapInPlace` (prototype-cloned equal rows, left→right
-  structural clone, detach-to-cache on collapse, lazy whitespace decorate after paint,
-  deferred pan remeasure). Full rebuild remains a fallback if DOM targets are missing.
+  structural clone, detach-to-cache on collapse, lazy whitespace decorate after paint).
+  A gap click is O(gap): registry lookup instead of walking the tbody, capture-phase
+  mousedown returns before pane-wide row scans / selectionchange, and pan overflow is
+  only remeasured when a newly inserted line is longer than the current max. Full
+  rebuild remains a fallback if DOM targets are missing.
 
 **Memory / performance (important for large comparisons, e.g. 216 diffs)**
 - Diffs render **lazily on expand**. `renderFileDiff(file, autoOpen)` renders only a
