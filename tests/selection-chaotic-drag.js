@@ -785,6 +785,145 @@ async function main() {
       );
     });
 
+    await runScenario("top-down mouse-off gap disarms trailing proximity arm", async () => {
+      const botGap = gaps.find((g) => g > lastText);
+      assert("trailing gap present for mouse-off disarm", botGap != null, `gaps=${gaps}`);
+      if (botGap == null) return;
+      await clearNativeSelection(page);
+      // Full above neighbor → onto trailing gap (arms) → back onto the neighbor
+      // in the same drag (pointer off gap). Proximity must disarm immediately
+      // even if clamp left the neighbor fully selected — no sticky .gap-armed
+      // after leaving the gap chrome.
+      const start = await edgeOfRow(page, "left", lastText, "start", FILE);
+      const end = await edgeOfRow(page, "left", lastText, "end", FILE);
+      const gapPt = await centerOfRow(page, "left", botGap, FILE);
+      const backOnNeighbor = end || (await centerOfRow(page, "left", lastText, FILE));
+      assert(
+        "top-down mouse-off points",
+        !!(start && end && gapPt && backOnNeighbor),
+        JSON.stringify({ start, end, gapPt, backOnNeighbor })
+      );
+      if (!start || !end || !gapPt || !backOnNeighbor) return;
+
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 8 });
+      await sleep(16);
+      await page.mouse.move(gapPt.x, gapPt.y, { steps: 8 });
+      await sleep(30);
+      let snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "top-down mouse-off: gap arms while pointer on gap",
+        snap.gapArmed.includes(botGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+
+      await page.mouse.move(backOnNeighbor.x, backOnNeighbor.y, { steps: 10 });
+      await sleep(40);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "top-down mouse-off: gap disarms when pointer leaves gap onto neighbor",
+        !snap.gapArmed.includes(botGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+      let inv = await gapNeighborInvariant(page, "left", botGap, lastText, FILE);
+      assert(
+        "top-down mouse-off live: never gap-armed with partial above neighbor",
+        inv && inv.invariantOk,
+        `inv=${JSON.stringify(inv)}`
+      );
+
+      await page.mouse.up();
+      await sleep(100);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "top-down mouse-off mouseup: trailing gap stays unarmed",
+        !snap.gapArmed.includes(botGap),
+        `armed=${snap.gapArmed}`
+      );
+      inv = await gapNeighborInvariant(page, "left", botGap, lastText, FILE);
+      assert(
+        "top-down mouse-off mouseup: never gap-armed with partial above neighbor",
+        inv && inv.invariantOk,
+        `inv=${JSON.stringify(inv)}`
+      );
+      const copied = await copySelectionText(page);
+      assert(
+        "top-down mouse-off copy excludes hidden trailing lines",
+        !/line 1[4-9]|line 20/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 160))}`
+      );
+    });
+
+    await runScenario("bottom-up mouse-off gap disarms leading proximity arm", async () => {
+      if (topGap == null) {
+        assert("top gap present for mouse-off disarm", false, "no top gap");
+        return;
+      }
+      await clearNativeSelection(page);
+      // Full below neighbor (RTL) → onto leading gap (arms) → back onto the
+      // neighbor in the same drag. Proximity must disarm on pointer leave.
+      const start = await edgeOfRow(page, "left", firstText, "start", FILE);
+      const end = await edgeOfRow(page, "left", firstText, "end", FILE);
+      const gapPt = await centerOfRow(page, "left", topGap, FILE);
+      const backOnNeighbor = start || (await centerOfRow(page, "left", firstText, FILE));
+      assert(
+        "bottom-up mouse-off points",
+        !!(start && end && gapPt && backOnNeighbor),
+        JSON.stringify({ start, end, gapPt, backOnNeighbor })
+      );
+      if (!start || !end || !gapPt || !backOnNeighbor) return;
+
+      await page.mouse.move(end.x, end.y);
+      await page.mouse.down();
+      await page.mouse.move(start.x, start.y, { steps: 8 });
+      await sleep(16);
+      await page.mouse.move(gapPt.x, gapPt.y, { steps: 8 });
+      await sleep(30);
+      let snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "bottom-up mouse-off: gap arms while pointer on gap",
+        snap.gapArmed.includes(topGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+
+      await page.mouse.move(backOnNeighbor.x, backOnNeighbor.y, { steps: 10 });
+      await sleep(40);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "bottom-up mouse-off: gap disarms when pointer leaves gap onto neighbor",
+        !snap.gapArmed.includes(topGap),
+        `armed=${snap.gapArmed} selected=${JSON.stringify((snap.selectedText || "").slice(0, 80))}`
+      );
+      let inv = await gapNeighborInvariant(page, "left", topGap, firstText, FILE);
+      assert(
+        "bottom-up mouse-off live: never gap-armed with partial below neighbor",
+        inv && inv.invariantOk,
+        `inv=${JSON.stringify(inv)}`
+      );
+
+      await page.mouse.up();
+      await sleep(100);
+      snap = await paneSnapshot(page, "left", FILE);
+      assert(
+        "bottom-up mouse-off mouseup: leading gap stays unarmed",
+        !snap.gapArmed.includes(topGap),
+        `armed=${snap.gapArmed}`
+      );
+      inv = await gapNeighborInvariant(page, "left", topGap, firstText, FILE);
+      assert(
+        "bottom-up mouse-off mouseup: never gap-armed with partial below neighbor",
+        inv && inv.invariantOk,
+        `inv=${JSON.stringify(inv)}`
+      );
+      const copied = await copySelectionText(page);
+      assert(
+        "bottom-up mouse-off copy excludes hidden line 1",
+        !/line 1/.test(copied || ""),
+        `copy=${JSON.stringify((copied || "").slice(0, 120))}`
+      );
+    });
+
     await runScenario("top-down retreat never arms gap with partial above neighbor", async () => {
       const botGap = gaps.find((g) => g > lastText);
       assert("trailing gap present for top-down retreat", botGap != null, `gaps=${gaps}`);
