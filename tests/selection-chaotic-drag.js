@@ -1470,14 +1470,16 @@ async function main() {
       await sleep(50);
       let native = await page.evaluate(() => window.getSelection()?.toString() || "");
       let copied = await copySelectionText(page);
+      // Chromium word-select may include the trailing space after CHANGED
+      // ("CHANGED "); accept that while still rejecting neighbor tokens.
       assert(
         "double-click native selects CHANGED",
-        native === "CHANGED",
+        /^CHANGED ?$/.test(native),
         `native=${JSON.stringify(native)}`
       );
       assert(
         "double-click copy is just CHANGED (not full line)",
-        copied === "CHANGED",
+        /^CHANGED ?$/.test(copied || ""),
         `copy=${JSON.stringify(copied)}`
       );
       assert(
