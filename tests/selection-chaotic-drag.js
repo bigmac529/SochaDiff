@@ -10,7 +10,9 @@
  * Starts `node server.js` on an ephemeral port for the run.
  */
 
+const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -1729,7 +1731,14 @@ async function main() {
       const gapPt = await centerOfRow(page, "left", topGap, FILE);
       assert("expand gap point", !!gapPt, JSON.stringify(gapPt));
       if (!gapPt) return;
-      await page.mouse.click(gapPt.x, gapPt.y);
+      const expandTimed = await page.evaluate(({ x, y }) => {
+        const t0 = performance.now();
+        const el = document.elementFromPoint(x, y);
+        const gap = el && el.closest("tr.gap-toggle");
+        if (gap) gap.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
+        return { ms: performance.now() - t0, hit: !!gap };
+      }, gapPt);
+      log(`  · expand sync ${expandTimed.ms.toFixed(1)}ms (fixture gap)`);
       await sleep(80);
 
       const expanded = await page.evaluate((fileName) => {
@@ -1799,7 +1808,14 @@ async function main() {
       }, FILE);
       assert("collapse gap point", !!hidePt, JSON.stringify(hidePt));
       if (!hidePt) return;
-      await page.mouse.click(hidePt.x, hidePt.y);
+      const collapseTimed = await page.evaluate(({ x, y }) => {
+        const t0 = performance.now();
+        const el = document.elementFromPoint(x, y);
+        const gap = el && el.closest("tr.gap-toggle");
+        if (gap) gap.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
+        return { ms: performance.now() - t0, hit: !!gap };
+      }, hidePt);
+      log(`  · collapse sync ${collapseTimed.ms.toFixed(1)}ms (fixture gap)`);
       await sleep(80);
 
       const after = await page.evaluate((fileName) => {
@@ -2233,6 +2249,74 @@ async function main() {
         leftAfter.wsMarked.length === 0 && leftAfter.gapArmed.length === 0,
         `left ws=${leftAfter.wsMarked}`
       );
+    });
+
+
+    await runScenario("large gap expand/collapse timing (soft)", async () => {
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "socha-gap-"));
+      const dirA = path.join(tmpRoot, "a");
+      const dirB = path.join(tmpRoot, "b");
+      fs.mkdirSync(dirA);
+      fs.mkdirSync(dirB);
+      const n = 1200;
+      const lines = [];
+      for (let i = 0; i < n; i++) {
+        lines.push(`line ${String(i).padStart(5, "0")} padding content for layout stress`);
+      }
+      fs.writeFileSync(path.join(dirA, "big.txt"), `${lines.join("\n")}\n`);
+      const linesB = lines.slice();
+      linesB[Math.floor(n / 2)] = "CHANGED middle line for a single hunk";
+      fs.writeFileSync(path.join(dirB, "big.txt"), `${linesB.join("\n")}\n`);
+
+      try {
+        await openCompare(page, baseUrl, dirA, dirB, "big.txt");
+        const timed = await page.evaluate(async () => {
+          const clickGap = () => {
+            const g = document.querySelector(".left-pane tr.gap-toggle");
+            if (!g) return null;
+            const t0 = performance.now();
+            g.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+            return performance.now() - t0;
+          };
+          const expand1 = clickGap();
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          const rows = document.querySelectorAll(".left-pane tbody > tr").length;
+          const collapse1 = clickGap();
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          const expand2 = clickGap();
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          const collapse2 = clickGap();
+          return { expand1, collapse1, expand2, collapse2, rows };
+        });
+        assert("large gap timing captured", !!(timed && timed.expand1 != null), JSON.stringify(timed));
+        log(
+          `  · large-gap (~${n} lines) expand1=${(timed.expand1 || 0).toFixed(1)}ms` +
+            ` collapse1=${(timed.collapse1 || 0).toFixed(1)}ms` +
+            ` expand2(cache)=${(timed.expand2 || 0).toFixed(1)}ms` +
+            ` collapse2=${(timed.collapse2 || 0).toFixed(1)}ms rows=${timed.rows}`
+        );
+        // Soft ceiling: first expand of ~1k equal lines should stay well under a janky 100ms
+        // on typical hardware; do not fail CI if a loaded box is slower.
+        if (timed.expand1 != null && timed.expand1 > 100) {
+          log(`  · note: expand1 ${timed.expand1.toFixed(1)}ms exceeded soft 100ms budget (not a failure)`);
+        }
+        assert(
+          "large gap expand inserted rows",
+          timed && timed.rows > 100,
+          JSON.stringify(timed)
+        );
+        assert(
+          "cached re-expand not slower than first build",
+          timed && timed.expand2 != null && timed.expand1 != null && timed.expand2 <= timed.expand1 + 5,
+          JSON.stringify(timed)
+        );
+      } finally {
+        try {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
     });
 
     await context.close();

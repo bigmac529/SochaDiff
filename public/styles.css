@@ -1138,7 +1138,9 @@ button {
   padding: 0 8px;
   white-space: pre;
   overflow: visible;
-  will-change: transform;
+  /* Avoid permanent will-change:transform — it promotes every line to its own
+     compositor layer and makes large gap expands much more expensive. Transform
+     is still applied inline while a pane is panned. */
   user-select: text;
   -webkit-user-select: text;
 }

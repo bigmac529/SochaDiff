@@ -1529,6 +1529,168 @@ async function syncFolders(direction) {
 }
 
 // ---------- diff rendering ----------
+
+// Prototype <tr> for equal side-by-side rows — cloneNode is far cheaper than
+// createElement×5 per line when expanding large gaps (~1k lines).
+let sbsEqualRowProto = null;
+function getSbsEqualRowProto() {
+  if (sbsEqualRowProto) return sbsEqualRowProto;
+  const tr = document.createElement("tr");
+  tr.className = "equal";
+  tr.dataset.hasText = "true";
+  const num = document.createElement("td");
+  num.className = "num";
+  const sign = document.createElement("td");
+  sign.className = "sign";
+  const textCell = document.createElement("td");
+  textCell.className = "text left";
+  const content = document.createElement("div");
+  content.className = "text-content";
+  textCell.appendChild(content);
+  tr.append(num, sign, textCell);
+  sbsEqualRowProto = tr;
+  return tr;
+}
+
+let unifiedEqualRowProto = null;
+function getUnifiedEqualRowProto() {
+  if (unifiedEqualRowProto) return unifiedEqualRowProto;
+  const tr = document.createElement("tr");
+  tr.className = "equal";
+  const numL = document.createElement("td");
+  numL.className = "num";
+  const numR = document.createElement("td");
+  numR.className = "num";
+  const sign = document.createElement("td");
+  sign.className = "sign";
+  const textCell = document.createElement("td");
+  textCell.className = "text";
+  const content = document.createElement("div");
+  content.className = "text-content";
+  textCell.appendChild(content);
+  tr.append(numL, numR, sign, textCell);
+  unifiedEqualRowProto = tr;
+  return tr;
+}
+
+// Whitespace decoration for bulk gap expands is deferred so the first paint
+// after click stays cheap; glyphs land in idle/rAF chunks afterward.
+let wsDecorateRaf = 0;
+const wsDecorateQueue = [];
+
+function enqueueWsDecorate(content, ending) {
+  if (!content) return;
+  content.dataset.wsPending = "1";
+  if (ending === "crlf" || ending === "lf") content.dataset.wsEnding = ending;
+  else delete content.dataset.wsEnding;
+  wsDecorateQueue.push(content);
+  if (!wsDecorateRaf) wsDecorateRaf = requestAnimationFrame(flushWsDecorateChunk);
+}
+
+function flushWsDecorateChunk() {
+  wsDecorateRaf = 0;
+  const budget = 96;
+  let n = 0;
+  while (n < budget && wsDecorateQueue.length) {
+    const content = wsDecorateQueue.shift();
+    if (!content || !content.isConnected || content.dataset.wsPending !== "1") continue;
+    const ending = content.dataset.wsEnding || "";
+    const raw = content.dataset.selPad === "1" ? "" : content.textContent;
+    content.textContent = "";
+    delete content.dataset.wsPending;
+    delete content.dataset.wsEnding;
+    delete content.dataset.selPad;
+    appendDecorated(content, raw, ending);
+    ensureSelectionPad(content);
+    n++;
+  }
+  if (wsDecorateQueue.length) wsDecorateRaf = requestAnimationFrame(flushWsDecorateChunk);
+}
+
+function fillGapTextContent(content, text, ending, lazyWs) {
+  const raw = text === null || text === undefined ? "" : text;
+  if (lazyWs && showWhitespace) {
+    content.textContent = raw;
+    ensureSelectionPad(content);
+    enqueueWsDecorate(content, ending || "");
+  } else if (showWhitespace) {
+    content.textContent = "";
+    appendDecorated(content, raw, ending || "");
+    ensureSelectionPad(content);
+  } else {
+    content.textContent = raw;
+    ensureSelectionPad(content);
+  }
+}
+
+// Fast equal-row builders used by gap expand (gap.rows are always type "equal").
+function buildSbsEqualRow(side, row, lazyWs) {
+  const tr = getSbsEqualRowProto().cloneNode(true);
+  const hasText = side === "left" ? row.leftNum !== null : row.rightNum !== null;
+  const num = side === "left" ? row.leftNum : row.rightNum;
+  const text = side === "left" ? row.leftText : row.rightText;
+  const ending = side === "left" ? row.leftEnding : row.rightEnding;
+  tr.dataset.hasText = hasText ? "true" : "false";
+  if (hasText) tr.dataset.ending = ending || "";
+  else delete tr.dataset.ending;
+  tr.children[0].textContent = hasText && num !== null && num !== undefined ? String(num) : "";
+  const textCell = tr.children[2];
+  textCell.className = hasText
+    ? side === "left" ? "text left" : "text right"
+    : side === "left" ? "text empty left" : "text empty right";
+  fillGapTextContent(textCell.firstChild, hasText ? text : "", hasText ? ending : "", lazyWs);
+  return tr;
+}
+
+function buildSbsEqualRowPair(row, lazyWs) {
+  const left = buildSbsEqualRow("left", row, lazyWs);
+  // Structural clone; retarget right pane classes / numbers. Text only rewritten
+  // when ignore-whitespace made the lines equal but the raw strings differ.
+  const right = left.cloneNode(true);
+  const rightHas = row.rightNum !== null;
+  right.dataset.hasText = rightHas ? "true" : "false";
+  if (rightHas) right.dataset.ending = row.rightEnding || "";
+  else delete right.dataset.ending;
+  right.children[0].textContent =
+    rightHas && row.rightNum !== null && row.rightNum !== undefined ? String(row.rightNum) : "";
+  const textCell = right.children[2];
+  textCell.className = rightHas ? "text right" : "text empty right";
+  if (!rightHas || row.leftText !== row.rightText || row.leftEnding !== row.rightEnding) {
+    const content = textCell.firstChild;
+    content.textContent = "";
+    delete content.dataset.selPad;
+    delete content.dataset.wsPending;
+    delete content.dataset.wsEnding;
+    fillGapTextContent(content, rightHas ? row.rightText : "", rightHas ? row.rightEnding : "", lazyWs);
+  } else if (lazyWs && showWhitespace) {
+    // Cloned node is already queued via left's content identity? No — clone is a
+    // separate node that copied dataset.wsPending; re-queue it.
+    const content = textCell.firstChild;
+    if (content.dataset.wsPending === "1") enqueueWsDecorate(content, content.dataset.wsEnding || "");
+  }
+  return { left, right };
+}
+
+function buildUnifiedEqualRow(row, lazyWs) {
+  const tr = getUnifiedEqualRowProto().cloneNode(true);
+  tr.children[0].textContent = row.leftNum === null || row.leftNum === undefined ? "" : String(row.leftNum);
+  tr.children[1].textContent = row.rightNum === null || row.rightNum === undefined ? "" : String(row.rightNum);
+  fillGapTextContent(tr.children[3].firstChild, row.leftText, row.leftEnding || "", lazyWs);
+  return tr;
+}
+
+function clearRowSelectionDecor(tr) {
+  const content = tr.querySelector && tr.querySelector(".text-content");
+  if (content) content.classList.remove("ws-line-selected");
+}
+
+function requeuePendingWsInFragment(frag) {
+  if (!showWhitespace || !frag || !frag.querySelectorAll) return;
+  for (const content of frag.querySelectorAll(".text-content[data-ws-pending='1']")) {
+    enqueueWsDecorate(content, content.dataset.wsEnding || "");
+  }
+}
+
 function gapToggleLabel(count, isExpanded) {
   const noun = count === 1 ? "line" : "lines";
   return isExpanded
@@ -1740,8 +1902,41 @@ function buildFileDiffBody(details, file) {
   }
 
   // Incremental expand/collapse: splice only the gap's rows into each pane
-  // tbody instead of rebuilding the whole file body (and re-decorating every
-  // unchanged line). Both panes stay row-aligned by applying the same splice.
+  // tbody instead of rebuilding the whole file body. Aggressive path:
+  // prototype-cloned equal rows, left→right structural clone, detach-to-cache
+  // on collapse (re-expand is a move), lazy whitespace decorate after paint,
+  // and deferred pan remeasure (no sync scrollWidth scan of the whole file).
+  const gapDomCache = new Map();
+
+  function detachFollowingRows(gapTr, count) {
+    const frag = document.createDocumentFragment();
+    let left = count;
+    while (left-- > 0 && gapTr.nextElementSibling) {
+      const row = gapTr.nextElementSibling;
+      clearRowSelectionDecor(row);
+      frag.appendChild(row);
+    }
+    return frag;
+  }
+
+  function schedulePanRefresh() {
+    requestAnimationFrame(() => {
+      refreshScrollGroups();
+      applyPanOffsets();
+      sizePanScrolls();
+    });
+  }
+
+  function applyPanToFragmentRows(frag, sideIndex) {
+    const offset = (panBars[sideIndex] && panBars[sideIndex].scrollLeft) || 0;
+    if (!offset) return;
+    for (const tr of frag.childNodes) {
+      if (tr.nodeType !== 1) continue;
+      const content = tr.querySelector && tr.querySelector(".text-content");
+      if (content) content.style.transform = `translateX(-${offset}px)`;
+    }
+  }
+
   function toggleGapInPlace(gapIndex) {
     const gapModel = file.rows[gapIndex];
     if (!gapModel || gapModel.type !== "gap" || !Array.isArray(gapModel.rows)) return false;
@@ -1752,6 +1947,7 @@ function buildFileDiffBody(details, file) {
     const gapMeta = { type: "gap", count: gapModel.count, gapIndex, expanded: willExpand };
     const hidden = gapModel.rows;
     const gapSelector = `tr.gap-toggle[data-gap-index="${gapIndex}"]`;
+    const lazyWs = showWhitespace && hidden.length > 12;
 
     // Resolve every target before mutating so a missing pane falls back cleanly.
     let targets;
@@ -1772,29 +1968,75 @@ function buildFileDiffBody(details, file) {
     if (willExpand) expanded.add(gapIndex);
     else expanded.delete(gapIndex);
 
-    for (const { side, gapTr } of targets) {
-      if (willExpand) {
+    if (willExpand) {
+      const cached = gapDomCache.get(gapIndex);
+      if (cached && isSideBySide && cached.left && cached.right) {
+        const leftFrag = document.createDocumentFragment();
+        const rightFrag = document.createDocumentFragment();
+        leftFrag.appendChild(sideBySideGapRow(gapMeta));
+        rightFrag.appendChild(sideBySideGapRow(gapMeta));
+        leftFrag.appendChild(cached.left);
+        rightFrag.appendChild(cached.right);
+        requeuePendingWsInFragment(leftFrag);
+        requeuePendingWsInFragment(rightFrag);
+        applyPanToFragmentRows(leftFrag, 0);
+        applyPanToFragmentRows(rightFrag, 1);
+        targets[0].gapTr.replaceWith(leftFrag);
+        targets[1].gapTr.replaceWith(rightFrag);
+        gapDomCache.delete(gapIndex);
+      } else if (cached && !isSideBySide && cached.unified) {
         const frag = document.createDocumentFragment();
-        if (side) {
-          frag.appendChild(sideBySideGapRow(gapMeta));
-          for (const row of hidden) frag.appendChild(sideBySideContentRow(side, row));
-        } else {
-          frag.appendChild(unifiedGapRow(gapMeta));
-          for (const row of hidden) appendUnifiedModelRow(frag, row);
+        frag.appendChild(unifiedGapRow(gapMeta));
+        frag.appendChild(cached.unified);
+        requeuePendingWsInFragment(frag);
+        applyPanToFragmentRows(frag, 0);
+        targets[0].gapTr.replaceWith(frag);
+        gapDomCache.delete(gapIndex);
+      } else if (isSideBySide) {
+        const leftFrag = document.createDocumentFragment();
+        const rightFrag = document.createDocumentFragment();
+        leftFrag.appendChild(sideBySideGapRow(gapMeta));
+        rightFrag.appendChild(sideBySideGapRow(gapMeta));
+        for (const row of hidden) {
+          if (row.type === "equal") {
+            const pair = buildSbsEqualRowPair(row, lazyWs);
+            leftFrag.appendChild(pair.left);
+            rightFrag.appendChild(pair.right);
+          } else {
+            leftFrag.appendChild(sideBySideContentRow("left", row));
+            rightFrag.appendChild(sideBySideContentRow("right", row));
+          }
         }
-        gapTr.replaceWith(frag);
+        applyPanToFragmentRows(leftFrag, 0);
+        applyPanToFragmentRows(rightFrag, 1);
+        targets[0].gapTr.replaceWith(leftFrag);
+        targets[1].gapTr.replaceWith(rightFrag);
       } else {
-        // gap.rows are equal lines (one <tr> each in both views).
-        let removeCount = hidden.length;
-        while (removeCount-- > 0 && gapTr.nextElementSibling) gapTr.nextElementSibling.remove();
+        const frag = document.createDocumentFragment();
+        frag.appendChild(unifiedGapRow(gapMeta));
+        for (const row of hidden) {
+          if (row.type === "equal") frag.appendChild(buildUnifiedEqualRow(row, lazyWs));
+          else appendUnifiedModelRow(frag, row);
+        }
+        applyPanToFragmentRows(frag, 0);
+        targets[0].gapTr.replaceWith(frag);
+      }
+    } else {
+      // Detach expanded rows into a cache instead of destroying them so a
+      // later re-expand is only a DOM move (+ fresh gap marker).
+      const stash = {};
+      for (const { side, gapTr } of targets) {
+        const detached = detachFollowingRows(gapTr, hidden.length);
+        if (side === "left") stash.left = detached;
+        else if (side === "right") stash.right = detached;
+        else stash.unified = detached;
         gapTr.replaceWith(side ? sideBySideGapRow(gapMeta) : unifiedGapRow(gapMeta));
       }
+      gapDomCache.set(gapIndex, stash);
     }
 
     proximityGapIndices.delete(gapIndex);
-    refreshScrollGroups();
-    applyPanOffsets();
-    requestAnimationFrame(sizePanScrolls);
+    schedulePanRefresh();
     return true;
   }
 
