@@ -1,0 +1,4 @@
+{
+  "version": "dev",
+  "note": "Placeholder. desktop/scripts/publish-site.ps1 overwrites this with the published version, commit, time and measured app size."
+}
