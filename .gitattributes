@@ -1,0 +1,3 @@
+# EOL fixtures must keep their exact CRLF/LF bytes on every platform.
+sample/eol-a/** -text
+sample/eol-b/** -text

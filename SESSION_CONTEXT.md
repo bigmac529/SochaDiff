@@ -275,6 +275,17 @@ slice, then expanded after each behavior was manually checked:
   `{ changes, result }` where `result` is a fresh comparison.
 - Settings load on startup via `loadSettings()`; helpers `applyDefaultSettings()`,
   `currentSettings()`, `saveSettings(settings)`.
+- `GET  /api/dir-exists?path=...` → `{ exists, isDirectory }` via `fs.promises.stat`
+  (resolved on the server's OS). ENOENT/ENOTDIR/EINVAL/ENAMETOOLONG → `exists:false`;
+  EACCES/EPERM add `error:"EACCES"`, other failures add `error:<code>`. Empty path → 400.
+- Browser auto-open: `npm start` runs `node server.js --open`; the `listen` callback opens
+  `http://localhost:<actual port>` via the platform opener (`cmd /c start "" url`, `open`,
+  `xdg-open`), spawned detached with errors ignored. Opt-in only (`--open` or
+  `SOCHA_OPEN_BROWSER=1`); `--no-open` / `SOCHA_NO_OPEN=1` always win. Plain `node server.js`,
+  embedded hosts and the test suites (which set `SOCHA_NO_OPEN=1`) never open a browser.
+- `normalizeFolderPath()` (trim + one matching pair of surrounding `"`/`'`) is applied to
+  folder inputs in compare, sync, sync/check, open-folder and dir-exists, so pasted
+  `"C:\path"` works everywhere.
 
 ## 11.3 Configurable exclusions & whitespace mode (`lib/compare.js`)
 
@@ -311,6 +322,20 @@ slice, then expanded after each behavior was manually checked:
   (indexed by `leftNum-1` / `rightNum-1`) before `collapseContext`.
 - Rendered only when **Show whitespace** is on: LF → `↓` (U+2193), CRLF → `↵` (U+21B5),
   no trailing newline → no marker.
+- **Differing endings are changes (whitespace-aware mode only).** `compareFile` promotes any
+  equal-content row whose `leftEnding !== rightEnding` to `replace` whenever whitespace is
+  NOT ignored, even when the file has other content changes (previously only when the
+  whole file differed solely in endings, so mixed files folded EOL-only lines into gaps).
+- Client: `eolDiffers(row)` (replace row, endings differ, `!currentIgnoreWhitespace`) adds
+  `.eol-changed` to that row's EOL cell (see Newline below) on both views: under the
+  `↵`/`↓` glyph with whitespace chars on, otherwise as the blank 1ch cell. It uses the changed-word
+  emphasis (A red `rgba(255,120,120,.4)`, B green `rgba(112,224,145,.55)`; unified targets
+  `tr.delete` / `tr.insert`). A side with no ending (missing final newline) gets no cell.
+  Fixtures: `sample/eol-a|eol-b` (`crlf-vs-lf.txt`, `mixed.txt`), kept byte-exact by
+  `.gitattributes` (`-text`).
+- Tests: `tests/newline-selection.js` (run by `npm run test:selection` after the chaotic
+  suite). All suites start `server.js` with a temp `SOCHA_DATA_DIR` so they use default
+  settings and never rewrite the checkout's `.socha-diff-*.json`.
 
 ## 11.6 Result object — additions vs §7
 
@@ -343,6 +368,14 @@ slice, then expanded after each behavior was manually checked:
   on `input` (600 ms debounce) and on `change` (immediate). `populateSettings` fills fields
   on open; auto-save does NOT rewrite the textarea mid-edit. Closes via ×, backdrop click, or Esc.
 
+**Folder path validation (blur)**
+- `setupPathValidation` on `#folderA`/`#folderB`: on blur a non-empty (normalized) value
+  calls `/api/dir-exists`; missing → `.path-invalid` + "Folder not found", file → "Not a
+  folder", EACCES → "Access denied"; a directory gets a subtle `.path-valid` border.
+  Messages render in `#folderX-status` on the label row (no layout shift). Typing clears
+  the state; a per-input token drops stale responses. Advisory only: never blocks Compare.
+- Test: `npm run test:paths` (`tests/path-validation.js`, own server on an ephemeral port).
+
 **Count chips / filtering**
 - Summary chips are buttons (`chip(className, category, n, label)`), `activeCategory`
   state; clicking filters to one category, clicking again clears; zero-count chips disabled.
@@ -367,12 +400,45 @@ slice, then expanded after each behavior was manually checked:
 **Selection & copy**
 - Selection is constrained to the `.select-scope` where the drag began
   (`selectionScope`, `scopeOf`, `selectionchange` clamp) — cannot cross A/B or files or page.
-- Copy handler writes `text/plain`; multi-row selections join `.text-content` textContent
-  with `\n` so newlines are preserved; whitespace is verbatim (whitespace glyphs are CSS
+- Copy handler writes `text/plain`; line terminators follow the Newline rules below; whitespace is verbatim (whitespace glyphs are CSS
   `::before/::after`, not real text).
 - **Auto-scroll while selecting**: dragging near a pane edge advances that pane's bar and
   extends the selection via `caretRangeFromPoint` (`autoScrollStep`, `EDGE=24`, `MAX_STEP=6`,
   `SPEED=0.15` — intentionally slow).
+
+**Newline as a selectable character** (supersedes "copy always appends the EOL")
+- Every line with a CRLF/LF ends in `span.eol` holding one real NBSP (`appendEolCell`,
+  cloned from `eolCellProto`), in side-by-side, unified and gap-expanded rows. With
+  whitespace chars on it is also `.ws-eol` and the glyph is `::after`, absolutely
+  positioned over the NBSP so the cell stays 1ch. A line with no final newline has no
+  cell. `lineTextFromContent` / `eolCellOf` strip the cell; never read `.text-content`
+  `textContent` directly for line text.
+- Because the cell is real text, native caret hit-testing and `::selection` paint treat
+  the newline like any character: drag to the end of the text (left half of the cell)
+  → no newline; onto the cell's right half, past it, or onto the next line → newline.
+  `isEolSelected` = both boundary points of the cell's NBSP are inside the range
+  (`Range.comparePoint`).
+- Copy (`copyDiffSelection`): a line's terminator is emitted exactly when its cell is
+  selected, using that line's own ending from `tr.dataset.ending` (`\r\n` or `\n`, the
+  existing `eolString` convention; never normalized). Single visible row →
+  `singleRowCopyText` (selected character offsets + optional terminator). Multi-row keeps
+  the whole-line convention for text, with the terminator per selected cell (so only the
+  last row can lack it). Whole-pane manual drags use `fullSideText` but
+  `trimUnselectedFinalEol` drops the last line's terminator when its cell is unselected
+  and no trailing gap follows. Gutter click/drag and triple-click select the cell (line +
+  newline); double-click a word does not. Ctrl+A / right-click whole pane unchanged.
+- Gap gate (`isGapNeighborFullySelected`): the line ABOVE a collapsed gap is "fully
+  selected" only with its text plus its newline (hidden lines start after it); the line
+  BELOW only needs its text from column 0. Used by arming, spanned inclusion, clamp and
+  prune. Arming still needs the pointer on the gap, so fully selecting the last line
+  (with or without its newline) never pulls in the adjacent gap.
+- Blank lines are just their newline: the cell doubles as the selection pad (no
+  `.sel-pad`), the content gets `.eol-only`, and the `ws-line-selected` 1ch `::after`
+  strip is skipped for it, so its paint is the native cell paint (only when the newline
+  is selected). `.ws-line-selected > .eol::selection` re-enables cell paint on
+  whitespace-only rows. Placeholder rows keep `.sel-pad`.
+- Cost: one extra span per line; ~1200-line gap expand ~6ms → ~10.5ms, 4-line toggle in
+  a 3000-line file unchanged (~1.5ms).
 
 **Show-whitespace toggle** (`#whitespace-btn`, `showWhitespace`)
 - Renders whitespace/control chars as visible marks while keeping real chars for copy:
@@ -382,7 +448,13 @@ slice, then expanded after each behavior was manually checked:
 
 **Click-to-expand gaps**
 - Gap rows carry `data-gap-index` + `.gap-toggle`; clicking expands the omitted `gap.rows`
-  in place. `buildFileDiffBody` keeps an `expanded` Set and rebuilds via `effectiveRows()`.
+  in place. `buildFileDiffBody` keeps an `expanded` Set. Initial open uses `effectiveRows()`;
+  later toggles splice via `toggleGapInPlace` (prototype-cloned equal rows, left→right
+  structural clone, detach-to-cache on collapse, lazy whitespace decorate after paint).
+  A gap click is O(gap): registry lookup instead of walking the tbody, capture-phase
+  mousedown returns before pane-wide row scans / selectionchange, and pan overflow is
+  only remeasured when a newly inserted line is longer than the current max. Full
+  rebuild remains a fallback if DOM targets are missing.
 
 **Memory / performance (important for large comparisons, e.g. 216 diffs)**
 - Diffs render **lazily on expand**. `renderFileDiff(file, autoOpen)` renders only a
@@ -403,6 +475,9 @@ slice, then expanded after each behavior was manually checked:
 - No horizontal scrollbar at minimum width: `.file-list li` and `.file-diff > summary .name`
   use `overflow-wrap:anywhere` (long paths wrap); `.field`/`.field input` have `min-width:0`
   and `.actions`/`.view-controls` use `flex-wrap:wrap` so the form/controls shrink/wrap.
+- The shared `#info-toast` (Comparing/Updating spinner and sync summary) is fixed at the
+  **top** center (`top:16px`, over the header band) and uses `width:max-content` so long
+  messages are not squeezed to half the viewport.
 - Cosmetic: background `--bg` brightened `#0d1117 → #10151d`; Save button styling `.secondary-btn`.
 
 ## 11.8 Verification approach used this session
@@ -459,6 +534,11 @@ explicitly changes them.
 - Side-by-side panes are separate selection scopes. Drag/copy cannot cross A and B,
   `Ctrl+A` selects all text in the clicked or focused pane, and copied text remains
   verbatim. Unified view uses the shared rows and disables text selection.
+- The newline is a selectable, paintable one-character cell at each line end; copy
+  includes a line's own CRLF/LF exactly when that cell is selected (see §11.7 Newline).
+  A collapsed gap's upper neighbor counts as fully selected only with its newline.
+- Differing line endings on changed pairs (whitespace-aware mode) use the changed-word
+  red/green emphasis on the EOL cell, with or without whitespace chars shown.
 - Gap markers stay at their original position when expanded. Expanded markers explain
   that they can be clicked to hide the unchanged lines again; clicking toggles them
   in both side-by-side and unified views.

@@ -45,7 +45,9 @@ npm install
 npm start
 ```
 
-Then open <http://127.0.0.1:3000> in your browser.
+`npm start` opens <http://localhost:3000> in your default browser once the
+server is listening. Use `npm start -- --no-open` or set `SOCHA_NO_OPEN=1` to
+skip that; plain `node server.js` never opens a browser.
 
 The server binds to `127.0.0.1` only. It reads arbitrary local paths you type
 in, so it is intentionally not exposed to the network. Set the `PORT`
@@ -73,6 +75,17 @@ You can prefill and auto-run a comparison via query parameters:
 - `b` — Folder B path
 - `run=1` — compare automatically on load
 - `view=unified` — start in unified view (default is side-by-side)
+
+
+## Selection smoke tests
+
+Chaotic drag-path coverage for side-by-side selection (no cross-pane bleed, gap arming, blank rows, reverse drags):
+
+```sh
+npm run test:selection
+```
+
+Requires Playwright Chromium once (`npx playwright install chromium`). If browsers are missing, the script soft-skips with install instructions instead of failing the run. The harness starts `server.js` on an ephemeral port and uses `sample/sel-*` and `sample/blank-*` fixtures.
 
 ## Project layout
 

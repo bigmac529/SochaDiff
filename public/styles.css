@@ -14,8 +14,49 @@
   --rep-border: #d29922;
   --num: #6e7681;
   --gap: #21262d;
-  /* Fully opaque so selection indicators never blend with what's underneath. */
-  --selection-tint: color-mix(in srgb, var(--accent) 45%, var(--panel));
+  /* Native-like opaque selection blue (classic system highlight ~#316AC5).
+     Solid so indicators never muddy with red/green diff row backgrounds. */
+  --selection-tint: #316AC5;
+}
+
+@font-face {
+  font-family: "Socha UI";
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Socha UI";
+  src: url("/fonts/Inter-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Socha UI";
+  src: url("/fonts/Inter-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Socha Mono";
+  src: url("/fonts/CascadiaMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Socha Code";
+  src: url("/fonts/CascadiaCode-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
 * {
@@ -24,7 +65,7 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Socha UI", "Segoe UI", system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
@@ -234,13 +275,48 @@ main {
   color: var(--text);
   padding: 8px 10px;
   font-size: 14px;
-  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-family: "Socha Mono", "Socha Code", "Cascadia Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
 }
 
 .field input:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(47, 129, 247, 0.3);
+}
+
+/* Folder path blur validation. The message shares the label row so showing
+   it never shifts the form layout. */
+.field-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.path-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--del-border);
+}
+
+.path-status:empty {
+  display: none;
+}
+
+.field input.path-invalid {
+  border-color: var(--del-border);
+}
+
+.field input.path-invalid:focus {
+  box-shadow: 0 0 0 2px rgba(218, 54, 51, 0.3);
+}
+
+.field input.path-valid:not(:focus) {
+  border-color: rgba(46, 160, 67, 0.55);
 }
 
 .actions {
@@ -476,16 +552,21 @@ main {
 }
 
 /* Small, titleless toast for transient/final status text; fixed position so
-   it never shifts page layout when it appears or disappears. */
+   it never shifts page layout when it appears or disappears. Anchored at the
+   top over the header band, clear of the folder inputs and their validation
+   messages at the default scroll position. */
 .info-toast {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  top: 16px;
   z-index: 50;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  /* max-content keeps left:50% from shrinking long messages to half the viewport. */
+  width: max-content;
   max-width: min(480px, calc(100vw - 32px));
+  box-sizing: border-box;
   padding: 8px 14px;
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -496,7 +577,7 @@ main {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translate(-50%, 4px);
+  transform: translate(-50%, -4px);
   transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
 }
 
@@ -731,13 +812,27 @@ button {
   pointer-events: none;
 }
 
+/* One-character EOL cell (a real NBSP) after every line with a CRLF/LF, so
+   the newline is selectable and paints with ::selection like other text.
+   Only the glyph variant is positioned (it anchors ::after); keeping the
+   plain cell static avoids a positioned box per line on large expands. */
+.text-content > .ws-eol {
+  position: relative;
+}
+
+/* The EOL glyph is drawn over the cell's NBSP rather than after it, so the
+   cell stays exactly one character wide. */
 .ws-eol::after {
   content: attr(data-eol);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  text-align: center;
   color: var(--num);
   pointer-events: none;
   /* Stretch vertically only, scaling from its own center so the glyph's
      midpoint stays anchored to the text line's vertical middle. */
-  display: inline-block;
   transform: scaleY(1.6);
   transform-origin: center;
 }
@@ -816,7 +911,7 @@ button {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   color: var(--muted);
   font-size: 13px;
-  font-family: ui-monospace, "Consolas", monospace;
+  font-family: "Socha Mono", "Cascadia Mono", "Consolas", ui-monospace, monospace;
 }
 
 .path-col {
@@ -920,7 +1015,7 @@ button {
   list-style: none;
   margin: 0;
   padding: 0;
-  font-family: ui-monospace, "Consolas", monospace;
+  font-family: "Socha Mono", "Cascadia Mono", "Consolas", ui-monospace, monospace;
   font-size: 13px;
 }
 
@@ -962,7 +1057,7 @@ button {
   cursor: pointer;
   padding: 10px 14px;
   background: var(--panel-2);
-  font-family: ui-monospace, "Consolas", monospace;
+  font-family: "Socha Mono", "Cascadia Mono", "Consolas", ui-monospace, monospace;
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -998,7 +1093,7 @@ button {
   width: 100%;
   height: auto;
   border-collapse: collapse;
-  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-family: "Socha Mono", "Socha Code", "Cascadia Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
   font-size: 12.5px;
   line-height: 1.5;
   table-layout: auto;
@@ -1029,6 +1124,9 @@ button {
 .diff-pane {
   min-width: 0;
   overflow: hidden;
+  /* Isolate pane layout so a small gap splice in a large table does not
+     invalidate unrelated page chrome; keeps post-toggle pointer frames lighter. */
+  contain: layout style;
 }
 
 .diff-pane + .diff-pane {
@@ -1052,6 +1150,14 @@ button {
   cursor: text;
 }
 
+/* Opposite pane(s) while the user is drag-selecting in another .select-scope.
+   Blocks native selection weave/bleed; active pane keeps its user-select: text. */
+.select-scope.select-inert,
+.select-scope.select-inert * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
 .diff-table td.num,
 .diff-table td.sign,
 .diff-table tr.gap td {
@@ -1071,6 +1177,7 @@ button {
   overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(230, 237, 243, 0.32) transparent;
+  contain: layout style;
 }
 
 .diff-scroll:hover {
@@ -1089,7 +1196,9 @@ button {
   padding: 0 8px;
   white-space: pre;
   overflow: visible;
-  will-change: transform;
+  /* Avoid permanent will-change:transform — it promotes every line to its own
+     compositor layer and makes large gap expands much more expensive. Transform
+     is still applied inline while a pane is panned. */
   user-select: text;
   -webkit-user-select: text;
 }
@@ -1191,6 +1300,30 @@ tr.replace td.text.right .diff-changed {
   color: #effff3;
 }
 
+/* Differing line endings on a replace pair get the same emphasis as changed
+   characters on the EOL cell: under the glyph when whitespace chars are
+   shown, otherwise as a blank one-character cell. Unified renders the pair
+   as delete (A) / insert (B) rows. */
+tr.replace td.text.left .eol-changed,
+.unified-diff tr.delete td.text .eol-changed {
+  background: rgba(255, 120, 120, 0.4);
+}
+
+tr.replace td.text.right .eol-changed,
+.unified-diff tr.insert td.text .eol-changed {
+  background: rgba(112, 224, 145, 0.55);
+}
+
+tr.replace td.text.left .ws-eol.eol-changed::after,
+.unified-diff tr.delete td.text .ws-eol.eol-changed::after {
+  color: #fff1f1;
+}
+
+tr.replace td.text.right .ws-eol.eol-changed::after,
+.unified-diff tr.insert td.text .ws-eol.eol-changed::after {
+  color: #effff3;
+}
+
 tr.delete td.sign,
 tr.replace td.sign.left {
   color: var(--del-border);
@@ -1211,15 +1344,30 @@ tr.gap td {
   user-select: none;
 }
 
-tr.gap-toggle td {
+/* Expand-hand only when the pointer is free to click the gap. Blink keeps an
+   explicit cursor:pointer during native text selection, so this must not apply
+   while drag-selecting or the I-beam flips to a hand over collapsed gaps. */
+body:not(.drag-selecting) tr.gap-toggle td {
   cursor: pointer;
 }
 
-/* While drag-selecting, force the text I-beam everywhere (matching native
-   text-selection). Otherwise the cursor flips to a pointer over the gap or the
-   file-diff summary even though a selection is active and clicking is disabled. */
+/* While drag-selecting, keep a stable I-beam (matching native text-selection)
+   over gaps, the file-diff summary, and everything else. Subject-matching
+   gap/summary rules sit alongside the universal override so table cells are
+   not left on cursor:pointer. */
 body.drag-selecting,
-body.drag-selecting * {
+body.drag-selecting *,
+html.drag-selecting,
+html.drag-selecting * {
+  cursor: text !important;
+}
+
+body.drag-selecting tr.gap-toggle,
+body.drag-selecting tr.gap-toggle td,
+body.drag-selecting .file-diff > summary,
+html.drag-selecting tr.gap-toggle,
+html.drag-selecting tr.gap-toggle td,
+html.drag-selecting .file-diff > summary {
   cursor: text !important;
 }
 
@@ -1235,23 +1383,70 @@ body.drag-selecting tr.gap-toggle:not(.gap-armed):hover td {
   background: var(--gap);
 }
 
-/* A single, fully opaque "soft blue" used for all three selection indicators
-   below, so the result never varies depending on what's underneath (a truly
-   translucent color would blend differently over each row's own background). */
+/* A single, fully opaque native-like blue used for all three selection
+   indicators below, so the result never varies depending on what's underneath
+   (a translucent color would muddy differently over each row's add/del bg). */
 
-/* Force native selection to the same solid, subtle color everywhere, instead
-   of blending translucently with each row's own background (add/del tint). */
+/* Force native ::selection to the same solid opaque blue everywhere, instead
+   of the browser's translucent Highlight blending with add/del row tints. */
 .diff-table ::selection {
   background: var(--selection-tint);
   color: var(--text);
 }
 
-/* A blank/whitespace-only line has no visible glyph, so native selection
-   highlighting on it is invisible; tint it explicitly while selected. The tint
-   starts at the content-box left edge (past the 8px padding) so it lines up
-   flush with where text — and its native selection — begins on other lines. */
+/* Invisible width-bearing pad so empty/blank .text-content has a real
+   selection target (Chromium otherwise yields no client rects / a 1px streak).
+   Copied text strips it via dataset.selPad. */
+.text-content > .sel-pad {
+  color: transparent;
+}
+
+/* Blank / whitespace-only / empty-placeholder selection paint: ~one character
+   wide (native caret / single-glyph width), not the full pane. Full-width
+   gradients previously left a dark seam between consecutive blank rows and
+   looked unlike native selection. Keep row min-height for alignment. */
 .text-content.ws-line-selected {
-  background: linear-gradient(to right, transparent 8px, var(--selection-tint) 8px);
+  background: none;
+  position: relative;
+}
+
+/* Pad-only blanks: paint the existing NBSP .sel-pad (measurable ~1ch box). */
+.text-content.ws-line-selected > .sel-pad {
+  display: inline-block;
+  width: 1ch;
+  max-width: 1ch;
+  min-height: 1.5em;
+  vertical-align: top;
+  background: var(--selection-tint);
+  color: transparent;
+}
+
+/* Whitespace-only rows without a .sel-pad: 1ch strip via ::after. A blank
+   line (.eol-only) is just its newline: the EOL cell itself paints, and only
+   when that newline is actually selected. */
+.text-content.ws-line-selected:not([data-sel-pad="1"]):not(.eol-only)::after {
+  content: "";
+  position: absolute;
+  left: 8px; /* match .text-content horizontal padding */
+  top: 0;
+  bottom: 0;
+  width: 1ch;
+  max-width: 1ch;
+  background: var(--selection-tint);
+  pointer-events: none;
+}
+
+/* Suppress the caret-width native streak on padded blank/empty rows; the
+   .sel-pad / ::after strip above is the selection paint. */
+.diff-table .text-content.ws-line-selected::selection,
+.diff-table .text-content.ws-line-selected *::selection {
+  background: transparent;
+  color: inherit;
+}
+
+/* ...except the newline cell, which paints natively on every row. */
+.diff-table .text-content.ws-line-selected > .eol::selection {
+  background: var(--selection-tint);
 }
 
 /* A collapsed gap the drag came close enough to — its hidden lines will be
@@ -1268,4 +1463,42 @@ td.empty {
 .hint {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* Custom diff context menu (Copy only) — dark Socha Diff aesthetic */
+.diff-context-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 148px;
+  padding: 4px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-family: "Socha UI", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.diff-context-menu-item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.diff-context-menu-item:hover,
+.diff-context-menu-item:focus-visible {
+  outline: none;
+  background: rgba(47, 129, 247, 0.22);
+  color: var(--text);
 }

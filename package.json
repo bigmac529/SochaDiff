@@ -6,10 +6,15 @@
   "main": "server.js",
   "scripts": {
     "prestart": "node scripts/free-port.js",
-    "start": "node server.js"
+    "start": "node server.js --open",
+    "test:selection": "node tests/selection-chaotic-drag.js && node tests/newline-selection.js",
+    "test:paths": "node tests/path-validation.js"
   },
   "dependencies": {
     "diff": "^5.2.0",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "playwright": "^1.55.0"
   }
 }
