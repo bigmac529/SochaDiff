@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Dev builds are framework-dependent (fast); the ClickOnce profile publishes self-contained. -->
+    <SelfContained>false</SelfContained>
+    <AssemblyName>SochaDiff</AssemblyName>
+    <RootNamespace>SochaDiff.Desktop</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>Socha Diff</Product>
+    <Company>Socha</Company>
+    <Version>1.0.0</Version>
+    <!-- Lets the project compile on Linux/macOS (CI, the build box). Harmless on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Ship English resources only (drops ~13 localized WPF/runtime satellite folders from the self-contained publish). -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Staged by desktop/scripts/prepare-bundle.ps1 (git-ignored). -->
+    <SochaBundleDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', 'bundle'))</SochaBundleDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!--
+    Bundled runtime + web app: node/node.exe, app/server.js, app/lib, app/public,
+    app/node_modules, bundle-info.json. As Content with CopyToOutputDirectory they
+    land beside SochaDiff.exe on build and are listed in the ClickOnce manifest on publish.
+  -->
+  <ItemGroup>
+    <Content Include="$(SochaBundleDir)**\*"
+             Link="%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             Visible="false" />
+  </ItemGroup>
+
+  <Target Name="SochaWarnMissingBundle" BeforeTargets="BeforeBuild"
+          Condition="!Exists('$(SochaBundleDir)node\node.exe') Or !Exists('$(SochaBundleDir)app\server.js')">
+    <Warning Code="SOCHA001"
+             Text="The Node/app bundle is missing ($(SochaBundleDir)). Run desktop/scripts/prepare-bundle.ps1 before running the app; it will show a startup error until then." />
+  </Target>
+
+  <Target Name="SochaRequireBundleForPublish" BeforeTargets="PrepareForPublish"
+          Condition="!Exists('$(SochaBundleDir)node\node.exe') Or !Exists('$(SochaBundleDir)app\server.js') Or !Exists('$(SochaBundleDir)app\node_modules\express\package.json')">
+    <Error Code="SOCHA002"
+           Text="Refusing to publish without the Node/app bundle ($(SochaBundleDir)). Run desktop/scripts/prepare-bundle.ps1 first." />
+  </Target>
+
+</Project>

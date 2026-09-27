@@ -106,6 +106,12 @@ function saveLastComparison(folderA, folderB) {
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// Readiness probe for embedded hosts (the Windows desktop wrapper polls this
+// before showing the UI). `pid` lets a host confirm it reached its own child.
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, app: "socha-diff", pid: process.pid });
+});
+
 app.get("/api/last-comparison", (_req, res) => {
   res.json(loadLastComparison());
 });
@@ -289,7 +295,14 @@ app.post("/api/sync/check", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-const HOST = "localhost";
+// SOCHA_HOST lets an embedded host pin the loopback address it probes
+// (e.g. 127.0.0.1, since "localhost" may resolve to ::1 first). Default unchanged;
+// non-loopback values are refused so the app is never exposed to the network.
+const HOST = process.env.SOCHA_HOST || "localhost";
+if (!/^(localhost|127(\.\d{1,3}){3}|::1)$/i.test(HOST)) {
+  console.error(`Refusing to listen on non-loopback SOCHA_HOST "${HOST}".`);
+  process.exit(1);
+}
 
 function envFlag(name) {
   const value = String(process.env[name] || "").trim().toLowerCase();
@@ -332,7 +345,7 @@ function openBrowser(url) {
 const server = app.listen(PORT, HOST, () => {
   // Bound to localhost only: the app reads arbitrary local paths, so it must
   // not be exposed to the network.
-  const url = `http://${HOST}:${server.address().port}`;
+  const url = `http://${HOST.includes(":") ? `[${HOST}]` : HOST}:${server.address().port}`;
   console.log(`Socha Diff app running at ${url}`);
   if (shouldOpenBrowser()) openBrowser(url);
 });

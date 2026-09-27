@@ -3,3 +3,10 @@ npm-debug.log*
 .socha-diff-state.json
 .socha-diff-settings.json
 .vs
+
+# Desktop host (desktop/): staged Node + app bundle, download cache, build output
+desktop/bundle/
+desktop/.cache/
+desktop/**/bin/
+desktop/**/obj/
+*.user
