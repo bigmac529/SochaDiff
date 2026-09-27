@@ -26,7 +26,7 @@ desktop/
   scripts/prepare-bundle.ps1       stages desktop/bundle/ (Windows, PowerShell 5.1 or 7)
   scripts/prepare-bundle.sh        same for Linux/macOS/Git Bash (CI, compile checks)
   scripts/publish-site.ps1         prepare-bundle + ClickOnce publish + site assembly -> desktop/out/site/
-  scripts/deploy-site.ps1          uploads desktop/out/site/ (Web Deploy or folder copy)
+  scripts/deploy-site.ps1          deploys desktop/out/site/ to the IIS root (backup, no-delete copy, verify)
   scripts/record-demo.js           re-records the site's demo video/GIF from a real session (Linux)
   bundle/                          git-ignored staging folder (created by the scripts)
   out/                             git-ignored publish-site output
