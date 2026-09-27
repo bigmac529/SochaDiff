@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # Self-hosted runner on the IIS server (deploy-self-hosted job in publish-desktop.yml).
+  labels:
+    - sochadiff-iis

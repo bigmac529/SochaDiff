@@ -1,0 +1,198 @@
+# Publishes the Socha Diff desktop app (ClickOnce) and the download site to
+# https://sochadiff.socha3.com/ on every merge to main.
+#
+#   version  = <major>.<minor>.<run_number>.0   (major/minor: desktop/version.json)
+#   build    = tests -> prepare-bundle -> VS MSBuild ClickOnce publish -> site folder artifact
+#   deploy   = Web Deploy (secrets DEPLOY_HOST/DEPLOY_SITE/DEPLOY_USER/DEPLOY_PASSWORD), or a
+#              self-hosted runner on the IIS server (repository variable DEPLOY_MODE=self-hosted);
+#              skipped when neither is configured. Pull requests only build.
+#   signing  = optional, when secrets SIGNING_PFX_BASE64 + SIGNING_PFX_PASSWORD exist.
+# Setup and secrets: desktop/README.md, "Continuous publishing".
+name: Publish desktop app and site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "site/**"
+      - "server.js"
+      - "lib/**"
+      - "public/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/publish-desktop.yml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy after building (main only)"
+        type: boolean
+        default: true
+      force:
+        description: "Deploy even if the live site reports the same or a newer version"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One publish at a time for main (queued, never cancelled mid-deploy); PR builds cancel older runs.
+concurrency:
+  group: publish-desktop-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Test, publish ClickOnce, assemble site
+    runs-on: windows-latest
+    timeout-minutes: 40
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
+      application_version: ${{ steps.publish.outputs.application_version }}
+      artifact: sochadiff-site-${{ steps.publish.outputs.application_version }}
+      deploy: ${{ steps.gate.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate (which optional secrets exist; deploy or not)
+        id: gate
+        shell: pwsh
+        env:
+          HAS_SIGNING: ${{ secrets.SIGNING_PFX_BASE64 != '' && secrets.SIGNING_PFX_PASSWORD != '' }}
+          HAS_WEBDEPLOY: ${{ secrets.DEPLOY_HOST != '' && secrets.DEPLOY_SITE != '' && secrets.DEPLOY_USER != '' && secrets.DEPLOY_PASSWORD != '' }}
+          DEPLOY_MODE: ${{ vars.DEPLOY_MODE }}
+          IS_MAIN: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy)) }}
+        run: |
+          $deploy = 'none'
+          if ($env:IS_MAIN -eq 'true') {
+            if ($env:DEPLOY_MODE -eq 'self-hosted') { $deploy = 'self-hosted' }
+            elseif ($env:HAS_WEBDEPLOY -eq 'true') { $deploy = 'webdeploy' }
+          }
+          "signing=$($env:HAS_SIGNING)" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          "deploy=$deploy" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          Write-Host "signing=$($env:HAS_SIGNING) deploy=$deploy"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium (tests)
+        run: npx playwright install chromium
+
+      - name: Test (selection)
+        run: npm run test:selection
+
+      - name: Test (path validation)
+        run: npm run test:paths
+
+      - name: Import signing certificate (optional)
+        id: cert
+        if: steps.gate.outputs.signing == 'true'
+        shell: pwsh
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'sochadiff-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          $pw = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfx -Force
+          "thumbprint=$($cert.Thumbprint)" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          Write-Host "Imported signing certificate $($cert.Subject), expires $($cert.NotAfter)"
+
+      - name: Publish ClickOnce and assemble site
+        id: publish
+        shell: pwsh
+        env:
+          THUMBPRINT: ${{ steps.cert.outputs.thumbprint }}
+        run: |
+          $params = @{ Build = [int]'${{ github.run_number }}'; InstallBootstrapperPackages = $true }
+          if ($env:THUMBPRINT) { $params.CertificateThumbprint = $env:THUMBPRINT }
+          ./desktop/scripts/publish-site.ps1 @params
+
+      - name: Remove signing certificate
+        if: always() && steps.cert.outputs.thumbprint != ''
+        shell: pwsh
+        run: Remove-Item -Force "Cert:\CurrentUser\My\${{ steps.cert.outputs.thumbprint }}" -ErrorAction SilentlyContinue
+
+      - name: Upload site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sochadiff-site-${{ steps.publish.outputs.application_version }}
+          path: desktop/out/site/
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy-webdeploy:
+    name: Deploy (Web Deploy)
+    needs: build
+    if: needs.build.outputs.deploy == 'webdeploy'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: desktop/scripts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: site-out
+
+      - name: Ensure Web Deploy (msdeploy)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:ProgramFiles\IIS\Microsoft Web Deploy V3\msdeploy.exe")) {
+            choco install webdeploy -y --no-progress
+          }
+
+      - name: Deploy ${{ needs.build.outputs.application_version }}
+        shell: pwsh
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SITE: ${{ secrets.DEPLOY_SITE }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
+          ALLOW_UNTRUSTED: ${{ vars.DEPLOY_ALLOW_UNTRUSTED }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          ./desktop/scripts/deploy-site.ps1 -Source site-out -Mode WebDeploy `
+            -ServerHost $env:DEPLOY_HOST -SiteName $env:DEPLOY_SITE `
+            -AllowUntrusted:($env:ALLOW_UNTRUSTED -eq 'true') -Force:($env:FORCE -eq 'true')
+
+  deploy-self-hosted:
+    name: Deploy (self-hosted runner on the IIS server)
+    needs: build
+    if: needs.build.outputs.deploy == 'self-hosted'
+    runs-on: [self-hosted, windows, sochadiff-iis]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: desktop/scripts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: site-out
+
+      - name: Copy ${{ needs.build.outputs.application_version }} to the site folder
+        shell: powershell
+        env:
+          TARGET: ${{ vars.DEPLOY_PATH || 'C:\WebApps\SochaDiff' }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          ./desktop/scripts/deploy-site.ps1 -Source site-out -Mode Copy -TargetPath $env:TARGET -Force:($env:FORCE -eq 'true')
