@@ -423,6 +423,9 @@ slice, then expanded after each behavior was manually checked:
 - No horizontal scrollbar at minimum width: `.file-list li` and `.file-diff > summary .name`
   use `overflow-wrap:anywhere` (long paths wrap); `.field`/`.field input` have `min-width:0`
   and `.actions`/`.view-controls` use `flex-wrap:wrap` so the form/controls shrink/wrap.
+- The shared `#info-toast` (Comparing/Updating spinner and sync summary) is fixed at the
+  **top** center (`top:16px`, over the header band) and uses `width:max-content` so long
+  messages are not squeezed to half the viewport.
 - Cosmetic: background `--bg` brightened `#0d1117 → #10151d`; Save button styling `.secondary-btn`.
 
 ## 11.8 Verification approach used this session

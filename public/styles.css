@@ -552,16 +552,21 @@ main {
 }
 
 /* Small, titleless toast for transient/final status text; fixed position so
-   it never shifts page layout when it appears or disappears. */
+   it never shifts page layout when it appears or disappears. Anchored at the
+   top over the header band, clear of the folder inputs and their validation
+   messages at the default scroll position. */
 .info-toast {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  top: 16px;
   z-index: 50;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  /* max-content keeps left:50% from shrinking long messages to half the viewport. */
+  width: max-content;
   max-width: min(480px, calc(100vw - 32px));
+  box-sizing: border-box;
   padding: 8px 14px;
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -572,7 +577,7 @@ main {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translate(-50%, 4px);
+  transform: translate(-50%, -4px);
   transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
 }
 
