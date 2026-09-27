@@ -160,7 +160,9 @@ public partial class MainWindow : Window
     {
         var items = args.MenuItems;
 #if DEBUG
-        string before = string.Join(", ", items.Select(i => i.Name));
+        static string Describe(CoreWebView2ContextMenuItem i) =>
+            i.Kind == CoreWebView2ContextMenuItemKind.Separator ? "|" : i.Name == "other" ? $"other({i.Label})" : i.Name;
+        string before = string.Join(", ", items.Select(Describe));
 #endif
         for (int i = items.Count - 1; i >= 0; i--)
         {
@@ -176,7 +178,7 @@ public partial class MainWindow : Window
         if (items.Count == 0) args.Handled = true;   // nothing useful left: show no menu
 #if DEBUG
         _server.Log($"host: context menu on {args.ContextMenuTarget.Kind} (editable={args.ContextMenuTarget.IsEditable}): " +
-                    $"[{before}] -> [{string.Join(", ", items.Select(i => i.Name))}]");
+                    $"[{before}] -> [{string.Join(", ", items.Select(Describe))}]");
 #endif
     }
 
