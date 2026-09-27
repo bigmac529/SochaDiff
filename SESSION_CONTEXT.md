@@ -690,8 +690,9 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
   (VS 2026 package) and the repo's `desktop/bootstrapper/Socha3.WebView2Runtime` (VS has no
   WebView2 package; `publish-site.ps1 -InstallBootstrapperPackages` copies it into VS). Missing
   packages are dropped with a warning (`SochaPrereqDotNet` / `SochaPrereqWebView2=false`).
-- **Size**: framework-dependent Folder publish 5,975,071 bytes (node_modules 3,062,028) vs
-  251,753,026 bytes for the old self-contained publish with node.exe.
+- **Size**: framework-dependent Folder publish 5,975,161 bytes / 615 files (node_modules
+  3,062,028 bytes / 592 files; 2,913,133 without) vs 251,753,026 bytes (~240 MiB) for the old
+  self-contained publish with node.exe. ClickOnce first install downloads about 6 MB.
 - **Site** `site/`: vanilla static download page (dark animated hero, real demo recording
   `assets/demo.webm|mp4|gif` + poster in a faux "Socha Diff" window, features, Install =
   `SochaDiff.application`, `setup.exe`, separate Prerequisites section, requirements, removable
@@ -699,12 +700,19 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
   manifest). `<!--app-version-->` / `<!--app-size-->` markers and `version.json` are stamped by
   publish-site.ps1. Demo fixtures `sample/demo-a|demo-b`; recorder `desktop/scripts/record-demo.js`
   (Xvfb + xdotool + ffmpeg x11grab, real input and cursor).
-- **Publishing**: `desktop/scripts/publish-site.ps1 -Build N` (Windows, VS MSBuild) ->
-  `desktop/out/site/` (git-ignored); `deploy-site.ps1` uploads it in two phases (manifest last,
-  never deletes, refuses non-newer versions). `.github/workflows/publish-desktop.yml`: push to
-  main / manual -> tests, publish, artifact, deploy via Web Deploy (secrets `DEPLOY_HOST`,
-  `DEPLOY_SITE`, `DEPLOY_USER`, `DEPLOY_PASSWORD`) or a self-hosted runner (`DEPLOY_MODE=self-hosted`,
-  copies to `C:\WebApps\SochaDiff`); optional signing (`SIGNING_PFX_BASE64`,
-  `SIGNING_PFX_PASSWORD`). PRs to main build only. Details: `desktop/README.md`.
+- **Publishing**: `desktop/scripts/publish-site.ps1 -Version a.b.c.d` or `-Build N` (Windows, VS
+  MSBuild; optional `-CertificateThumbprint` or `-PfxPath/-PfxPassword`) -> `desktop/out/site/`
+  (git-ignored). The version goes into ApplicationVersion, MinimumRequiredVersion and the assembly
+  versions; `SignManifests` also Authenticode-signs SochaDiff.exe/setup.exe before hashing.
+  `deploy-site.ps1` uploads in two phases (everything, then `SochaDiff.application`; never
+  deletes; refuses non-newer versions). `.github/workflows/publish-desktop.yml`: push to main or
+  manual run -> windows-latest, Node 24, .NET 10, npm ci + `test:selection` + `test:paths`,
+  version `<major>.<minor>.<run_number>.0`, publish, artifact `sochadiff-site-<version>`;
+  `deploy` job only on main when secrets `DEPLOY_HOST`, `DEPLOY_SITE`, `DEPLOY_USER`,
+  `DEPLOY_PASSWORD` all exist (Web Deploy, `vars.DEPLOY_ALLOW_UNTRUSTED` / input
+  `allow_untrusted`); optional signing with `SIGNING_PFX_BASE64` + `SIGNING_PFX_PASSWORD`.
+  Concurrency group `publish-desktop`, never cancelled. A self-hosted runner alternative
+  (`[self-hosted, windows, sochadiff]`, robocopy to `C:\WebApps\SochaDiff`) is commented in the
+  workflow. actionlint clean. Details, secrets and IIS prep: `desktop/README.md`.
 - Still open: signing certificate and IIS site/DNS/deploy access (Sissy Admin); first real
   install test of a CI-published build on Windows.

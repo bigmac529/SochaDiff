@@ -42,7 +42,7 @@ desktop/
       ClickOnce.pubxml             https://sochadiff.socha3.com/, framework-dependent
       Folder.pubxml                plain framework-dependent folder, for local testing
 ../site/                           the static download page (vanilla HTML/CSS/JS, web.config)
-../.github/workflows/publish-desktop.yml   publishes on every merge to main
+../.github/workflows/publish-desktop.yml   publishes on every push to main
 ```
 
 ## Prepare the bundle
@@ -155,8 +155,10 @@ dotnet publish desktop/SochaDiff.Desktop -p:PublishProfile=Folder
 # -> desktop/SochaDiff.Desktop/bin/publish/folder/SochaDiff.exe (framework-dependent)
 ```
 
-Measured on the build box (2026-09-27): **5,975,071 bytes (5.7 MiB)** for the whole folder,
-of which `app/node_modules` is 3,062,028 bytes (2,913,043 bytes without it); 2.3 MB zipped.
+Measured on the build box (2026-09-27, re-checked after the publish scripts landed):
+**5,975,161 bytes (5.7 MiB, 615 files)** for the whole folder, of which `app/node_modules` is
+3,062,028 bytes in 592 files (2,913,133 bytes / 23 files without it); about 2 MB compressed.
+ClickOnce downloads the same files one by one (as `*.deploy`), so a first install is about 6 MB.
 The previous self-contained .NET 8 publish with bundled `node.exe` was 251,753,026 bytes
 (240 MiB, 101 MB zipped).
 
@@ -166,15 +168,20 @@ ClickOnce needs Visual Studio's MSBuild (VS 2026 / MSBuild 18 for .NET 10); `dot
 does not support it. From a Developer PowerShell:
 
 ```powershell
-pwsh desktop/scripts/publish-site.ps1 -Build 42                     # unsigned
+pwsh desktop/scripts/publish-site.ps1 -Build 42                     # 1.0.42.0 (major/minor from version.json), unsigned
+pwsh desktop/scripts/publish-site.ps1 -Version 1.0.42.0            # explicit four-part version
 pwsh desktop/scripts/publish-site.ps1 -Build 42 -InstallBootstrapperPackages   # elevated: adds the WebView2 prerequisite to VS
+pwsh desktop/scripts/publish-site.ps1 -Build 42 -CertificateThumbprint <thumb> # signed, cert in Cert:\CurrentUser\My
+pwsh desktop/scripts/publish-site.ps1 -Build 42 -PfxPath C:\temp\socha3.pfx -PfxPassword (Read-Host -AsSecureString)
 # -> desktop/out/site/  index.html, styles.css, site.js, assets/, web.config, version.json,
 #                       SochaDiff.application, setup.exe, Application Files/SochaDiff_1_0_42_0/
 ```
 
-It runs prepare-bundle, `msbuild /t:Publish /p:PublishProfile=ClickOnce` with version
-`<major>.<minor>.<Build>.0`, then assembles the site and stamps the version and the measured
-app payload size into `index.html` and `version.json`. Upload the **contents** of
+It runs prepare-bundle, `msbuild /t:Publish /p:PublishProfile=ClickOnce` with the version passed
+as `ApplicationVersion`, `MinimumRequiredVersion`, `Version`/`FileVersion`/`AssemblyVersion`,
+checks that `SochaDiff.application` carries that version, then assembles the site and stamps
+the version and the measured app payload size into the output copy of `index.html` and
+`version.json` (the committed `site/` files stay placeholders). Upload the **contents** of
 `desktop/out/site/` to the site root, `SochaDiff.application` last:
 
 ```powershell
@@ -212,11 +219,33 @@ Profile choices (`ClickOnce.pubxml`):
 - `MapFileExtensions=true` (files are served as `*.deploy`), `setup.exe` bootstrapper
   enabled (Chrome/Firefox, and Edge without ClickOnce support, do not open `.application`
   links), desktop shortcut.
-- **Signing: TODO.** The code-signing certificate comes from Sissy Admin. Until then the
-  manifests are unsigned, and installs show "Unknown publisher" and SmartScreen prompts (the
-  site has a clearly marked `UNSIGNED-NOTICE` block, removed automatically by publish-site.ps1
-  when it signs). Sign with `-CertificateThumbprint` (cert in `Cert:\CurrentUser\My`) or the CI
-  secrets below. After signing, also consider Authenticode-signing `SochaDiff.exe` and `setup.exe`.
+- **Signing**: see [Signing](#signing) below. Unsigned until the Socha3 certificate arrives.
+
+### Signing
+
+The Socha3 code-signing certificate comes from Sissy Admin. Until it is configured the release
+is unsigned: installs show "Unknown publisher" and SmartScreen prompts, and the site shows a
+clearly marked `UNSIGNED-NOTICE` block that publish-site.ps1 removes automatically when it signs.
+
+- `publish-site.ps1 -CertificateThumbprint <thumb>` (certificate with private key already in
+  `Cert:\CurrentUser\My`) or `-PfxPath <file> -PfxPassword <SecureString>` (imported into
+  `Cert:\CurrentUser\My` for the build; certificate and private key are removed again
+  afterwards, even on failure).
+- It sets `SignManifests=true`, `ManifestCertificateThumbprint` and `ManifestTimestampUrl`
+  (`-TimestampUrl`, default `http://timestamp.digicert.com`; use the issuing CA's RFC 3161 server
+  if it has one). MSBuild's ClickOnce signing then Authenticode-signs `SochaDiff.exe` (the apphost),
+  the entry assembly and `setup.exe` **before** hashing them into the manifests, and signs the
+  application and deployment manifests. No separate signtool step is needed (signing the exe
+  after publishing would break the manifest hashes).
+- The certificate must be a code-signing certificate (EKU 1.3.6.1.5.5.7.3.3) with an exportable
+  private key in a PFX. A certificate whose key lives only in a hardware token/HSM or a cloud
+  signing service cannot be used from a PFX secret; that would need a self-hosted build runner
+  with the token, or a different signing step.
+- Keep the same certificate across releases where possible. Renewing it is fine for ClickOnce
+  (.NET 4.5+ clients accept a new certificate), but the publisher name shown should stay "Socha3".
+- CI: store the PFX as `SIGNING_PFX_BASE64`
+  (`[Convert]::ToBase64String([IO.File]::ReadAllBytes('socha3.pfx')) | Set-Clipboard`) and its
+  password as `SIGNING_PFX_PASSWORD`. Missing either one = unsigned build (with a notice).
 
 ### IIS site (`site/web.config`)
 
@@ -229,69 +258,107 @@ allows double escaping so any node_modules path in `Application Files` is served
 
 ## Continuous publishing (`.github/workflows/publish-desktop.yml`)
 
-Every push to `main` (and **Run workflow** on main) builds and publishes a new version;
-pull requests to main only build (artifact, no deploy).
+Every push to `main` builds and publishes a new version; **Actions -> Publish desktop app and
+site -> Run workflow** does the same on demand (inputs: `deploy`, `force`, `allow_untrusted`).
+A manual run on another branch builds the artifact but never deploys.
 
-1. `windows-latest` (Windows Server 2025, Visual Studio 2026): Node 24, .NET 10 SDK,
-   `microsoft/setup-msbuild`.
-2. `npm ci`, Playwright Chromium, `npm run test:selection`, `npm run test:paths`.
-3. Optional signing: when `SIGNING_PFX_BASE64` and `SIGNING_PFX_PASSWORD` exist, the PFX is
-   imported into the runner's user store and its thumbprint passed on; removed afterwards.
-4. `publish-site.ps1 -Build <run_number> -InstallBootstrapperPackages`: version
-   `<major>.<minor>.<run_number>.0` (major/minor from `desktop/version.json`) stamped into
-   `ApplicationVersion`, `MinimumRequiredVersion`, the assembly/file version, the page and
-   `version.json`.
-5. Uploads `desktop/out/site/` as the artifact `sochadiff-site-<version>` (30 days).
-6. Deploy, only for main, only when configured (otherwise the deploy jobs are skipped):
-   - **Web Deploy** (`deploy-webdeploy`): when all four secrets exist. Two msdeploy syncs
-     (everything but `SochaDiff.application`, then the manifest), never deleting on the server.
-   - **Self-hosted runner** (`deploy-self-hosted`): when the repository variable
-     `DEPLOY_MODE=self-hosted`. Same two phases with robocopy into `DEPLOY_PATH`
-     (default `C:\WebApps\SochaDiff`).
-   Both refuse to deploy a version that is not newer than the live `version.json`
-   (`force` input on a manual run overrides).
+### Versioning
 
-`concurrency` keeps one publish at a time for main (a newer push waits, never cancels a
-running deploy); PR runs cancel older PR runs. To start a new minor/major line, edit
-`desktop/version.json`; the run number keeps increasing, so versions stay monotonic.
+- `desktop/version.json` holds `major` and `minor`. The build number is `github.run_number`, so
+  every run gets `<major>.<minor>.<run_number>.0`, e.g. `1.0.57.0`. The run number only goes up,
+  so versions are monotonic; to start a new line, bump `minor`/`major` in version.json (never
+  lower them).
+- That one version is passed (`publish-site.ps1 -Version`) into ClickOnce `ApplicationVersion`
+  and `MinimumRequiredVersion`, the assembly `Version`/`FileVersion`/`AssemblyVersion`, the
+  displayed version on the page and the site's `version.json` (`version`,
+  `applicationVersion`, commit, time, payload size, signed flag).
+- `MinimumRequiredVersion` = the new version plus `UpdateMode=Foreground`: an installed client
+  checks `SochaDiff.application` before every start and installs the new version without a
+  Skip option. Offline starts run the installed version.
+- Local builds (`dotnet build`, no `SochaBuildNumber`) are `<major>.<minor>.0.0`.
+
+### What the workflow does
+
+1. `build` on `windows-latest`: checkout, Node 24 (`actions/setup-node`), .NET 10 SDK
+   (`actions/setup-dotnet`), `npm ci`, Playwright Chromium, `npm run test:selection`,
+   `npm run test:paths`, `microsoft/setup-msbuild`.
+2. Optional signing: when `SIGNING_PFX_BASE64` and `SIGNING_PFX_PASSWORD` both exist, the PFX is
+   decoded to `RUNNER_TEMP`, publish-site.ps1 imports it for the build and removes the
+   certificate and key, and an `always()` step deletes the PFX file.
+3. `publish-site.ps1 -Version <version> -InstallBootstrapperPackages`, then `desktop/out/site/`
+   is uploaded as the artifact `sochadiff-site-<version>` (30 days). You can download it from
+   the run page and deploy it by hand.
+4. `deploy` (needs `build`): runs only on `main` and only when `DEPLOY_HOST`, `DEPLOY_SITE`,
+   `DEPLOY_USER` and `DEPLOY_PASSWORD` all exist (checked in a step of `build` and exposed as a
+   job output, because secrets cannot appear in a job-level `if`). Installs Web Deploy on the
+   runner if missing, then `deploy-site.ps1 -Mode WebDeploy`:
+   - refuses a version that is not newer than the live `version.json` (`force` input overrides);
+   - **phase 1** syncs everything except `SochaDiff.application`; **phase 2** syncs the
+     manifest, so a client never sees a manifest pointing at files that are not uploaded yet;
+   - never deletes on the server (older `Application Files/SochaDiff_*` folders stay, so a client
+     mid-update keeps working; prune old ones by hand now and then, about 6 MB each).
+5. `concurrency: publish-desktop` without cancel-in-progress: runs queue, and a newer push never
+   cancels a deploy in progress.
+
+The workflow lints clean with actionlint 1.7.12.
 
 ### Secrets and variables (Settings -> Secrets and variables -> Actions)
 
-| Name | Kind | Needed for |
+| Name | Kind | What it is |
 |---|---|---|
-| `DEPLOY_HOST` | secret | Web Deploy: server host name (WMSvc on port 8172), or a full `https://host:8172/msdeploy.axd?site=...` URL |
-| `DEPLOY_SITE` | secret | Web Deploy: IIS site name, e.g. `sochadiff.socha3.com` |
-| `DEPLOY_USER` / `DEPLOY_PASSWORD` | secrets | Web Deploy: IIS Manager or Windows user allowed to deploy to that site |
-| `DEPLOY_ALLOW_UNTRUSTED` | variable | `true` if WMSvc still uses its self-signed certificate |
-| `DEPLOY_MODE` | variable | `self-hosted` to deploy through the self-hosted runner instead |
-| `DEPLOY_PATH` | variable | self-hosted: site folder (default `C:\WebApps\SochaDiff`) |
-| `SIGNING_PFX_BASE64` / `SIGNING_PFX_PASSWORD` | secrets | optional ClickOnce signing: `[Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx'))` |
+| `DEPLOY_HOST` | secret | Host name of the IIS server's Web Management Service, e.g. `web1.socha3.com` (port 8172 is added), or `host:port`, or a full `https://host:8172/msdeploy.axd?site=<site>` URL |
+| `DEPLOY_SITE` | secret | IIS site name exactly as in IIS Manager, e.g. `sochadiff.socha3.com` (the sync target is that site's root) |
+| `DEPLOY_USER` | secret | IIS Manager user (or Windows account) allowed to deploy to that site only |
+| `DEPLOY_PASSWORD` | secret | Its password (no commas or double quotes: msdeploy's argument syntax) |
+| `DEPLOY_ALLOW_UNTRUSTED` | variable (optional) | `true` while WMSvc still uses its self-signed certificate (passes `-allowUntrusted`) |
+| `SIGNING_PFX_BASE64` | secret (optional) | The Socha3 code-signing PFX, base64-encoded |
+| `SIGNING_PFX_PASSWORD` | secret (optional) | The PFX password |
+
+Without the four `DEPLOY_*` secrets the workflow still builds, tests and uploads the artifact.
 
 ### Server setup (Sissy Admin)
 
-Common: IIS site `sochadiff.socha3.com` (static content only; default document `index.html`),
-physical path e.g. `C:\WebApps\SochaDiff`, HTTPS binding with a certificate for
-`sochadiff.socha3.com`, DNS `sochadiff.socha3.com` -> the server. The app's `InstallUrl` is
-`https://sochadiff.socha3.com/`, so it must be served at the site root.
+Common: IIS site `sochadiff.socha3.com` (static content only; default document `index.html`;
+no ASP.NET or URL Rewrite needed), physical path e.g. `C:\WebApps\SochaDiff`, HTTPS binding
+with a certificate for `sochadiff.socha3.com`, DNS `sochadiff.socha3.com` -> the server. The
+app's `InstallUrl` is `https://sochadiff.socha3.com/`, so it must be served at the site root;
+`site/web.config` (deployed with the site) supplies the ClickOnce MIME types and cache rules.
+Enable IIS **Static Content** (and optionally static compression).
 
-Option A, Web Deploy from GitHub-hosted runners:
-1. Install the IIS **Management Service** role feature and **Web Deploy 3.6** (with the IIS
-   Deployment Handler); set WMSvc to start automatically and enable remote connections
-   (IIS Manager -> server -> Management Service).
-2. Create an IIS Manager user (or use a Windows account) and grant it the site under
-   **IIS Manager Permissions**; Web Deploy needs write access to the physical path
-   (Management Service Delegation rule "Deploy Applications with Content" or the
-   "contentPath" provider for that user).
-3. Open TCP 8172 to the internet (GitHub-hosted runner IPs are not fixed) and preferably bind
-   WMSvc to a real certificate (otherwise set `DEPLOY_ALLOW_UNTRUSTED=true`).
-4. Add the four `DEPLOY_*` secrets.
+Option A, Web Deploy from GitHub-hosted runners (what the workflow does):
+1. Server Manager -> IIS -> **Management Tools -> Management Service**. In IIS Manager -> server
+   -> Management Service: **Enable remote connections**, "Windows credentials or IIS Manager
+   credentials", port 8172, ideally a real certificate for the host name; set the WMSvc
+   service to start automatically and start it.
+2. Install **Web Deploy 4.0** (x64, Complete / including the *IIS Deployment Handler* and
+   *Management Service Delegation*). Install it after the Management Service, or re-run it
+   ("Change") so the handler registers.
+3. IIS Manager -> server -> **IIS Manager Users** -> add e.g. `sochadiff-deploy`; then site
+   `sochadiff.socha3.com` -> **IIS Manager Permissions** -> Allow User -> that user. The user can
+   then deploy to this site only.
+4. Server -> **Management Service Delegation**: make sure a rule allows `contentPath` (and
+   `createApp`, `setAcl`) for that user/site (the "Deploy Applications with Content" template),
+   and that the rule's identity (usually the site's app pool or a dedicated account) can write
+   to the physical path.
+5. Firewall: allow inbound **TCP 8172**. GitHub-hosted runner IPs change (they are published in
+   `https://api.github.com/meta`, "actions"), so either open 8172 broadly with a strong password
+   or use Option B.
+6. Add the four `DEPLOY_*` secrets (plus `DEPLOY_ALLOW_UNTRUSTED=true` if WMSvc keeps its
+   self-signed certificate).
 
-Option B, self-hosted runner on the IIS server (no inbound port):
+Test from any Windows PC with Web Deploy:
+`msdeploy -verb:dump -source:contentPath=sochadiff.socha3.com,computerName=https://<host>:8172/msdeploy.axd?site=sochadiff.socha3.com,userName=<u>,password=<p>,authType=Basic -allowUntrusted`.
+
+Option B, self-hosted runner on the IIS server (no inbound port, no deploy secrets):
 1. Repo -> Settings -> Actions -> Runners -> New self-hosted runner (Windows x64); install it as
-   a service with labels `self-hosted, windows, sochadiff-iis`. The service account needs
-   modify rights on `C:\WebApps\SochaDiff` (it only needs outbound HTTPS to GitHub).
-2. Set the repository variable `DEPLOY_MODE=self-hosted` (and `DEPLOY_PATH` if the folder
-   differs). Build still runs on GitHub's Windows runner; only the copy runs on the server.
+   a service with the extra label `sochadiff` (labels `self-hosted, windows, sochadiff`). The
+   service account needs modify rights on `C:\WebApps\SochaDiff` and outbound HTTPS to GitHub.
+2. In `publish-desktop.yml`, replace the `deploy` job with the commented `deploy-self-hosted`
+   job (same two phases, via `deploy-site.ps1 -Mode Copy`, robocopy without deletes). Build
+   still runs on GitHub's Windows runner; only the copy runs on the server.
+3. Keep that runner attached to this private repository only: it runs whatever workflow code
+   it is given and can write to the site.
 
-Security note for Option B: a self-hosted runner on a private repo runs only this repo's
-workflows; keep it that way (never attach it to a public repo), since it can write to the site.
+Manual deploy from a Windows PC (e.g. before the secrets exist):
+`pwsh desktop/scripts/deploy-site.ps1 -Source desktop/out/site -Mode Copy -TargetPath \\server\WebApps\SochaDiff`
+(or `-Mode WebDeploy -ServerHost ... -SiteName ...` with `DEPLOY_USER`/`DEPLOY_PASSWORD` set).
