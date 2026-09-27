@@ -283,6 +283,11 @@ slice, then expanded after each behavior was manually checked:
   `xdg-open`), spawned detached with errors ignored. Opt-in only (`--open` or
   `SOCHA_OPEN_BROWSER=1`); `--no-open` / `SOCHA_NO_OPEN=1` always win. Plain `node server.js`,
   embedded hosts and the test suites (which set `SOCHA_NO_OPEN=1`) never open a browser.
+- `GET  /api/health` → `{ ok: true, app: "socha-diff", pid }`. Readiness probe for the
+  desktop host (§14); `pid` lets the host confirm it reached its own child.
+- `SOCHA_HOST` (optional) overrides the listen host (default `localhost`, unchanged). Only
+  loopback values (`localhost`, `127.x.x.x`, `::1`) are accepted; anything else makes
+  the server exit(1). The desktop host sets `127.0.0.1`.
 - `normalizeFolderPath()` (trim + one matching pair of surrounding `"`/`'`) is applied to
   folder inputs in compare, sync, sync/check, open-folder and dir-exists, so pasted
   `"C:\path"` works everywhere.
@@ -612,3 +617,42 @@ explicitly changes them.
 - The `initial` branch was explicitly created and pushed to `origin/initial`; no new
   commit should be made unless requested.
 
+---
+
+# 14. Windows desktop host (`desktop/`)
+
+Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
+
+- `desktop/SochaDiff.Desktop/`: a .NET 8 WPF app (`net8.0-windows`, win-x64,
+  `Microsoft.Web.WebView2`) with `desktop/SochaDiff.sln`. It is a full-window WebView2
+  over the unchanged web app. The web app stays vanilla; its only hooks are
+  `/api/health` and `SOCHA_HOST` (§11.2).
+- Bundled runtime: `desktop/scripts/prepare-bundle.ps1` (and `.sh`) stages the git-ignored
+  `desktop/bundle/`, containing `node/node.exe` (pinned in `desktop/node-pin.json`, currently
+  Node 24.21.0 LTS, SHA256 checked against the pin and `SHASUMS256.txt`) and `app/`
+  (`server.js`, `lib/`, `public/`, package files, and `npm ci --omit=dev` node_modules).
+  The csproj includes `bundle/**` as Content, so build and ClickOnce copy it. Never
+  commit `node.exe` or `node_modules`. Re-run the script after web app changes before
+  building the desktop app.
+- Startup: free `127.0.0.1` port → `node app/server.js` with `PORT`, `SOCHA_HOST=127.0.0.1`,
+  `SOCHA_NO_OPEN=1`, `SOCHA_DATA_DIR=%LOCALAPPDATA%\SochaDiff`, no console window.
+  stdout/stderr go to `%LOCALAPPDATA%\SochaDiff\server.log`. The host polls `/api/health`
+  (pid must match), then navigates. It shows a loading panel meanwhile and an error panel
+  (message + log path + Retry) on failure.
+- Lifecycle: node runs in a `KILL_ON_JOB_CLOSE` Job Object (with `SILENT_BREAKAWAY_OK`
+  so apps opened via open-file/open-folder survive). Normal close also kills it.
+- WebView2: user data in `%LOCALAPPDATA%\SochaDiff\WebView2`. Off-origin links go to the
+  default browser. DevTools are enabled in Debug only. The browser-chrome items are
+  filtered out of the default context menu. The diff panes keep the app's own Copy
+  menu, since the page cancels `contextmenu` there. A missing WebView2 Runtime shows a
+  friendly panel.
+- Desktop settings/state live in `%LOCALAPPDATA%\SochaDiff`, not the repo folder, so they
+  are separate from `npm start` runs and survive ClickOnce updates.
+- ClickOnce: `Properties/PublishProfiles/ClickOnce.pubxml`, install URL
+  `https://sochadiff.socha3.com/`, self-contained, update check before start. Signing is
+  still TODO (the cert comes from Sissy Admin). Publish needs VS MSBuild
+  (`msbuild /t:Publish /p:PublishProfile=ClickOnce`), not `dotnet publish`.
+- Verified 2026-09-27 on the Home PC (Win 11): startup on a random port, real folder
+  compare in WebView2, app Copy menu → clipboard, close and `Stop-Process -Force` both
+  kill node, crash → Retry, error panels, and a local ClickOnce publish (manifest lists
+  node/app files). Not yet done: publishing to the site, signing.
