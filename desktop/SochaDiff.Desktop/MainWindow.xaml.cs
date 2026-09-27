@@ -17,7 +17,7 @@ public partial class MainWindow : Window
         "back", "forward", "reload", "saveAs", "print", "createQrCode", "share", "webCapture",
         "openLinkInNewWindow", "saveLinkAs", "copyLinkLocation", "copyLinkToClipboard",
         "saveImageAs", "copyImageLocation", "openImageInNewWindow", "saveMediaAs", "openMediaInNewWindow",
-        "readAloud", "search", "sendTabToSelf",
+        "readAloud", "search", "sendTabToSelf", "moreTools",
     };
 
     private readonly NodeServer _server = new();
@@ -160,7 +160,7 @@ public partial class MainWindow : Window
     {
         var items = args.MenuItems;
 #if DEBUG
-        _server.Log("host: context menu items: " + string.Join(", ", items.Select(i => i.Name)));
+        string before = string.Join(", ", items.Select(i => i.Name));
 #endif
         for (int i = items.Count - 1; i >= 0; i--)
         {
@@ -174,6 +174,10 @@ public partial class MainWindow : Window
                 items.RemoveAt(i);
         }
         if (items.Count == 0) args.Handled = true;   // nothing useful left: show no menu
+#if DEBUG
+        _server.Log($"host: context menu on {args.ContextMenuTarget.Kind} (editable={args.ContextMenuTarget.IsEditable}): " +
+                    $"[{before}] -> [{string.Join(", ", items.Select(i => i.Name))}]");
+#endif
     }
 
     private bool IsAppUri(string uri) =>
