@@ -79,6 +79,10 @@ $msdeploy = @(
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $msdeploy) { throw "msdeploy.exe not found (install Web Deploy 3.6, e.g. choco install webdeploy)." }
 if ($Source -match '[\s,]') { throw "Source path must not contain spaces or commas for msdeploy: $Source" }
+# msdeploy parses -dest as comma-separated key=value pairs, so these characters would break it.
+foreach ($pair in @(@('DEPLOY_USER', $env:DEPLOY_USER), @('DEPLOY_PASSWORD', $env:DEPLOY_PASSWORD), @('DEPLOY_SITE', $SiteName))) {
+  if ($pair[1] -match '[,"]') { throw "$($pair[0]) must not contain commas or double quotes (msdeploy provider syntax)." }
+}
 
 $url = if ($ServerHost -match '://') { $ServerHost } else { "https://${ServerHost}:8172/msdeploy.axd?site=$SiteName" }
 $dest = "-dest:contentPath=$SiteName,computerName=$url,userName=$($env:DEPLOY_USER),password=$($env:DEPLOY_PASSWORD),authType=Basic"

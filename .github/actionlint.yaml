@@ -1,4 +1,5 @@
 self-hosted-runner:
-  # Self-hosted runner on the IIS server (deploy-self-hosted job in publish-desktop.yml).
+  # Label of the optional self-hosted runner on the IIS server (commented deploy-self-hosted job
+  # in publish-desktop.yml), so actionlint accepts it once uncommented.
   labels:
-    - sochadiff-iis
+    - sochadiff
