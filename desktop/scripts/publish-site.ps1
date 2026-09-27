@@ -1,221 +1,294 @@
 <#
 .SYNOPSIS
-  Builds the ClickOnce release and assembles the complete sochadiff.socha3.com site folder.
+  Builds the ClickOnce release of Socha Diff and assembles the complete website
+  (download page + ClickOnce files) in desktop/out/site/, ready for the IIS root of
+  https://sochadiff.socha3.com/.
 
 .DESCRIPTION
-  Runs on Windows with Visual Studio's MSBuild (ClickOnce publishing is not supported by
-  `dotnet publish`). Used by .github/workflows/publish-desktop.yml and for manual releases.
+  Windows only: ClickOnce publishing needs Visual Studio's MSBuild (or Build Tools with the
+  ClickOnce/.NET desktop components); `dotnet publish` cannot do it.
 
-    1. prepare-bundle.ps1              stages desktop/bundle/app (web app + production node_modules)
-    2. msbuild /t:Publish              ClickOnce profile, framework-dependent, version
-                                       <major>.<minor>.<Build>.0 (major/minor from desktop/version.json)
-    3. assemble desktop/out/site/      ClickOnce output (SochaDiff.application, setup.exe,
-                                       Application Files/) + site/ (page, assets, web.config)
-    4. stamp                           displayed version + measured app size into index.html,
-                                       and version.json
+    1. resolves the version: -Version a.b.c.d, or <major>.<minor> from desktop/version.json
+       plus -Build (CI passes the GitHub Actions run number);
+    2. runs prepare-bundle.ps1 (stages desktop/bundle/: the web app + production node_modules);
+    3. runs msbuild /t:Publish with PublishProfile=ClickOnce, passing the version into
+       ApplicationVersion, MinimumRequiredVersion (so installed clients must update at their
+       next launch) and the assembly Version/FileVersion/AssemblyVersion;
+       optional signing: -CertificateThumbprint (cert already in Cert:\CurrentUser\My) or
+       -PfxPath/-PfxPassword (imported for the build and removed again afterwards). Signing
+       covers the deployment + application manifests, SochaDiff.exe, the entry point
+       assembly and setup.exe (MSBuild's ClickOnce signing);
+    4. copies site/ and then the ClickOnce output (SochaDiff.application, setup.exe,
+       Application Files/SochaDiff_a_b_c_d/) into desktop/out/site/, and stamps the output copy
+       of the site: version.json (version, commit, time, measured app size, signed flag),
+       the version/size markers in index.html, and removes the "Unknown publisher" notice
+       when the release is signed. The committed site/ files are not modified.
 
-  Upload the CONTENTS of the output folder to the IIS site root (deploy-site.ps1 does that
-  and uploads SochaDiff.application last). Every release needs a higher -Build than the one
-  that is live; CI uses the GitHub Actions run number.
-
-  setup.exe prerequisites: the .NET 10 Desktop Runtime package ships with Visual Studio 2026's
-  ClickOnce components; the WebView2 package lives in desktop/bootstrapper/ and is copied into
-  Visual Studio with -InstallBootstrapperPackages (needs admin). A package that is not found is
-  left out of setup.exe with a warning (the site's prerequisite list and in-app checks remain).
-
-  Signing: TODO until Sissy Admin provides the code-signing certificate. Pass
-  -CertificateThumbprint (certificate in Cert:\CurrentUser\My) to sign the manifests.
+  Deploy desktop/out/site/ with the manifest (SochaDiff.application) copied LAST, so a client
+  never sees a manifest that points at files that are not uploaded yet (the GitHub workflow
+  does this with a two-phase msdeploy sync).
 
 .EXAMPLE
   pwsh desktop/scripts/publish-site.ps1 -Build 42
+  # -> 1.0.42.0 (major/minor from desktop/version.json), unsigned
 .EXAMPLE
-  pwsh desktop/scripts/publish-site.ps1 -Build 42 -InstallBootstrapperPackages -CertificateThumbprint 0123ABCD...
+  pwsh desktop/scripts/publish-site.ps1 -Version 1.0.42.0 -CertificateThumbprint 0123ABCD...
+.EXAMPLE
+  pwsh desktop/scripts/publish-site.ps1 -Build 42 -PfxPath C:\temp\socha3.pfx -PfxPassword (Read-Host -AsSecureString)
 #>
 [CmdletBinding()]
 param(
-  # Third version part (CI: github.run_number). Must be higher than the live release.
-  [int]$Build = 0,
-  # Output folder (default desktop/out/site). Emptied first.
+  # Full four-part version (a.b.c.d). Takes precedence over -Build.
+  [string]$Version,
+  # Build number (third part); major/minor come from desktop/version.json.
+  [int]$Build = -1,
+  # Output folder for the assembled site (default desktop/out/site).
   [string]$OutDir,
-  # Copy desktop/bootstrapper/* into Visual Studio's BootstrapperPackages folder first (admin).
-  [switch]$InstallBootstrapperPackages,
-  # Sign the ClickOnce manifests with this certificate (Cert:\CurrentUser\My). Unsigned if empty.
+  # Explicit MSBuild.exe; default: msbuild on PATH, else the newest VS/Build Tools via vswhere.
+  [string]$MSBuildPath,
+  # Signing, option 1: thumbprint of a code-signing cert (with private key) in Cert:\CurrentUser\My.
   [string]$CertificateThumbprint,
+  # Signing, option 2: a PFX file, imported into Cert:\CurrentUser\My for the build and removed afterwards.
+  [string]$PfxPath,
+  [SecureString]$PfxPassword,
+  # RFC 3161 timestamp server used for manifests and Authenticode signatures.
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
-  # Reuse an existing desktop/bundle instead of running prepare-bundle.ps1.
-  [switch]$SkipPrepare,
-  # Explicit MSBuild.exe (default: msbuild on PATH, else the latest Visual Studio via vswhere).
-  [string]$MSBuild
+  # Copy desktop/bootstrapper/* (the WebView2 setup.exe prerequisite) into Visual Studio's
+  # BootstrapperPackages folder first. Needs admin rights (GitHub-hosted runners have them).
+  [switch]$InstallBootstrapperPackages,
+  # Use the existing desktop/bundle/ instead of running prepare-bundle.ps1.
+  [switch]$SkipPrepareBundle
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+
 $desktopDir = Split-Path -Parent $PSScriptRoot
 $repoRoot   = Split-Path -Parent $desktopDir
-$project    = Join-Path $desktopDir 'SochaDiff.Desktop\SochaDiff.Desktop.csproj'
+$projectDir = Join-Path $desktopDir 'SochaDiff.Desktop'
+$project    = Join-Path $projectDir 'SochaDiff.Desktop.csproj'
+$publishDir = Join-Path $projectDir 'bin\publish\clickonce'
 $siteSrc    = Join-Path $repoRoot 'site'
-$publishDir = Join-Path $desktopDir 'SochaDiff.Desktop\bin\publish\clickonce'
 if (-not $OutDir) { $OutDir = Join-Path $desktopDir 'out\site' }
+$OutDir = [IO.Path]::GetFullPath($OutDir)
 
-# ---- version -------------------------------------------------------------------------
-$v = Get-Content (Join-Path $desktopDir 'version.json') -Raw | ConvertFrom-Json
-$displayVersion = '{0}.{1}.{2}' -f [int]$v.major, [int]$v.minor, $Build
-$appVersion     = "$displayVersion.0"
-if ($Build -eq 0) { Write-Warning "Build number 0: fine for a local test, but never deploy it over a real release (use -Build N)." }
-Write-Host "Socha Diff $appVersion"
+function Write-Step([string]$Text) { Write-Host "`n=== $Text" -ForegroundColor Cyan }
 
-# ---- MSBuild ---------------------------------------------------------------------------
-if (-not $MSBuild) {
-  $cmd = Get-Command msbuild.exe -ErrorAction SilentlyContinue
-  if ($cmd) { $MSBuild = $cmd.Source }
-  else {
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (Test-Path $vswhere) {
-      $MSBuild = & $vswhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-    }
-  }
-}
-if (-not $MSBuild -or -not (Test-Path $MSBuild)) { throw "Visual Studio MSBuild not found. Run from a Developer PowerShell or pass -MSBuild." }
-Write-Host "MSBuild: $MSBuild"
-# ...\MSBuild\Current\Bin\[amd64\]MSBuild.exe -> ...\MSBuild
-$msbuildRoot = (Resolve-Path $MSBuild).Path
-while ($msbuildRoot -and (Split-Path -Leaf $msbuildRoot) -ne 'MSBuild') { $msbuildRoot = Split-Path -Parent $msbuildRoot }
+if ($env:OS -ne 'Windows_NT') { throw 'publish-site.ps1 needs Windows (Visual Studio MSBuild for ClickOnce).' }
 
-# ---- bootstrapper packages ----------------------------------------------------------------
-$packageDirs = @()
-if ($msbuildRoot) { $packageDirs += (Join-Path $msbuildRoot 'Microsoft\VisualStudio\BootstrapperPackages') }
-$sdkBootstrapper = Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\ClickOnce Bootstrapper'
-$packageDirs += (Join-Path $sdkBootstrapper 'Packages')
-foreach ($key in 'HKLM:\SOFTWARE\Microsoft\GenericBootstrapper', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\GenericBootstrapper') {
-  if (Test-Path $key) {
-    Get-ChildItem $key -ErrorAction SilentlyContinue | ForEach-Object {
-      $p = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).Path
-      if ($p) { $packageDirs += (Join-Path $p 'Packages') }
-    }
-  }
-}
-$packageDirs = $packageDirs | Where-Object { $_ } | Select-Object -Unique
-
-if ($InstallBootstrapperPackages) {
-  $target = $packageDirs | Where-Object { Test-Path $_ } | Select-Object -First 1
-  if (-not $target) { Write-Warning "No ClickOnce BootstrapperPackages folder found; cannot install the custom packages." }
-  else {
-    foreach ($pkg in Get-ChildItem (Join-Path $desktopDir 'bootstrapper') -Directory) {
-      try {
-        Copy-Item -Recurse -Force $pkg.FullName (Join-Path $target $pkg.Name)
-        Write-Host "Installed bootstrapper package $($pkg.Name) -> $target"
-      } catch {
-        Write-Warning "Could not install bootstrapper package $($pkg.Name) into $target (run elevated): $($_.Exception.Message)"
-      }
-    }
-  }
-}
-
-function Test-BootstrapperPackage([string]$ProductCode) {
-  foreach ($dir in $packageDirs) {
-    if (-not (Test-Path $dir)) { continue }
-    foreach ($xml in Get-ChildItem $dir -Filter product.xml -Recurse -Depth 1 -ErrorAction SilentlyContinue) {
-      if ((Get-Content $xml.FullName -Raw) -match ('ProductCode\s*=\s*"' + [regex]::Escape($ProductCode) + '"')) { return $xml.DirectoryName }
-    }
-  }
-  return $null
-}
-$prereqDotNet  = Test-BootstrapperPackage 'Microsoft.NetCore.DesktopRuntime.10.0.x64'
-$prereqWebView = Test-BootstrapperPackage 'Socha3.WebView2Runtime.Evergreen'
-if ($prereqDotNet)  { Write-Host "setup.exe prerequisite: .NET 10 Desktop Runtime x64 ($prereqDotNet)" }
-else { Write-Warning "Bootstrapper package Microsoft.NetCore.DesktopRuntime.10.0.x64 not found (Visual Studio 2026 ClickOnce components). setup.exe will not offer .NET 10; the app's own '.NET is required' prompt and the site cover it." }
-if ($prereqWebView) { Write-Host "setup.exe prerequisite: WebView2 Evergreen ($prereqWebView)" }
-else { Write-Warning "Bootstrapper package Socha3.WebView2Runtime.Evergreen not installed (use -InstallBootstrapperPackages, elevated). setup.exe will not offer WebView2; the app's own panel and the site cover it." }
-
-# ---- 1. bundle ------------------------------------------------------------------------------
-if (-not $SkipPrepare) {
-  & (Join-Path $PSScriptRoot 'prepare-bundle.ps1')
-  if (-not $?) { throw "prepare-bundle.ps1 failed" }
-}
-
-# ---- 2. ClickOnce publish ------------------------------------------------------------------
-if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
-$msbuildArgs = @(
-  $project, '/restore', '/t:Publish', '/nologo', '/v:minimal',
-  '/p:PublishProfile=ClickOnce', '/p:Configuration=Release',
-  "/p:SochaBuildNumber=$Build",
-  "/p:ApplicationVersion=$appVersion", '/p:ApplicationRevision=0', "/p:MinimumRequiredVersion=$appVersion",
-  "/p:PublishDir=$publishDir\",
-  ('/p:SochaPrereqDotNet=' + [bool]$prereqDotNet).ToLowerInvariant(),
-  ('/p:SochaPrereqWebView2=' + [bool]$prereqWebView).ToLowerInvariant()
-)
-$signed = $false
-if ($CertificateThumbprint) {
-  $thumb = $CertificateThumbprint -replace '\s', ''
-  if (-not (Test-Path "Cert:\CurrentUser\My\$thumb")) { throw "Certificate $thumb not found in Cert:\CurrentUser\My" }
-  $msbuildArgs += @('/p:SignManifests=true', "/p:ManifestCertificateThumbprint=$thumb",
-                    "/p:ManifestTimestampRFC3161Url=$TimestampUrl", '/p:SignatureAlgorithm=sha256RSA')
-  $signed = $true
-  Write-Host "Signing manifests with $thumb"
+# ---------------------------------------------------------------- 1. version
+$versionJson = Get-Content (Join-Path $desktopDir 'version.json') -Raw | ConvertFrom-Json
+if ($Version) {
+  if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw "-Version must have four numeric parts (a.b.c.d), got '$Version'." }
+} elseif ($Build -ge 0) {
+  $Version = '{0}.{1}.{2}.0' -f [int]$versionJson.major, [int]$versionJson.minor, $Build
 } else {
-  Write-Warning "Unsigned publish (TODO: certificate from Sissy Admin). Installs show 'Unknown publisher'."
+  throw 'Pass -Version a.b.c.d or -Build N (the version must be higher than the one already on the site).'
 }
-& $MSBuild @msbuildArgs
-if ($LASTEXITCODE -ne 0) { throw "msbuild publish failed with exit code $LASTEXITCODE" }
+$parts = $Version.Split('.') | ForEach-Object { [int]$_ }
+if (($parts | Where-Object { $_ -gt 65535 }).Count -gt 0) { throw "Each version part must be <= 65535 ($Version)." }
+if ($parts[0] -ne [int]$versionJson.major -or $parts[1] -ne [int]$versionJson.minor) {
+  Write-Warning "Version $Version does not match major/minor $($versionJson.major).$($versionJson.minor) in desktop/version.json."
+}
+$displayVersion = '{0}.{1}.{2}' -f $parts[0], $parts[1], $parts[2]
+$commit = ''
+try { $commit = (git -C $repoRoot rev-parse --short HEAD 2>$null) } catch { }
+Write-Host "Socha Diff $Version (commit $commit)"
 
-$manifest = Join-Path $publishDir 'SochaDiff.application'
-$versionFolder = Join-Path $publishDir ("Application Files\SochaDiff_" + ($appVersion -replace '\.', '_'))
-if (-not (Test-Path $manifest)) { throw "Publish output has no SochaDiff.application ($publishDir)" }
-if (-not (Test-Path $versionFolder)) { throw "Publish output has no $versionFolder" }
+# ---------------------------------------------------------------- 2. MSBuild + Visual Studio
+Write-Step 'Locating MSBuild'
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+if (-not $MSBuildPath) {
+  $cmd = Get-Command msbuild -ErrorAction SilentlyContinue
+  if ($cmd) { $MSBuildPath = $cmd.Source }
+  elseif (Test-Path $vswhere) {
+    $MSBuildPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+  }
+}
+if (-not $MSBuildPath -or -not (Test-Path $MSBuildPath)) {
+  throw 'MSBuild.exe not found. Run from a Developer PowerShell, pass -MSBuildPath, or install Visual Studio / Build Tools with the .NET desktop workload.'
+}
+# <VS>\MSBuild\Current\Bin[\amd64]\MSBuild.exe -> <VS>
+$vsRoot = $MSBuildPath
+while ($vsRoot -and (Split-Path -Leaf $vsRoot) -ne 'MSBuild') { $vsRoot = Split-Path -Parent $vsRoot }
+if ($vsRoot) { $vsRoot = Split-Path -Parent $vsRoot }
+Write-Host "MSBuild: $MSBuildPath"
+Write-Host "Visual Studio: $vsRoot"
 
-# ---- 3. assemble ---------------------------------------------------------------------------
+# ---------------------------------------------------------------- 3. setup.exe prerequisites
+# GenerateBootstrapper looks in both folders.
+$pkgDirs = @()
+if ($vsRoot) { $pkgDirs += (Join-Path $vsRoot 'MSBuild\Microsoft\VisualStudio\BootstrapperPackages') }
+$pkgDirs += (Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\ClickOnce Bootstrapper\Packages')
+if ($InstallBootstrapperPackages) {
+  if (-not $vsRoot) { throw 'Cannot install bootstrapper packages: Visual Studio folder unknown.' }
+  $dest = $pkgDirs[0]
+  Write-Step "Installing desktop/bootstrapper packages into $dest"
+  New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  Get-ChildItem -Directory (Join-Path $desktopDir 'bootstrapper') | ForEach-Object {
+    Copy-Item -Recurse -Force $_.FullName $dest
+    Write-Host "  $($_.Name)"
+  }
+}
+function Test-BootstrapperPackage([string]$Name) {
+  foreach ($d in $pkgDirs) { if (Test-Path (Join-Path $d "$Name\product.xml")) { return $true } }
+  return $false
+}
+$prereqDotNet   = Test-BootstrapperPackage 'Microsoft.NetCore.DesktopRuntime.10.0.x64'
+$prereqWebView2 = Test-BootstrapperPackage 'Socha3.WebView2Runtime.Evergreen'
+if (-not $prereqDotNet)   { Write-Warning 'Bootstrapper package Microsoft.NetCore.DesktopRuntime.10.0.x64 not installed (comes with Visual Studio 2026 ClickOnce components): setup.exe will not offer the .NET 10 Desktop Runtime.' }
+if (-not $prereqWebView2) { Write-Warning 'Bootstrapper package Socha3.WebView2Runtime.Evergreen not installed (use -InstallBootstrapperPackages): setup.exe will not offer the WebView2 Runtime.' }
+
+# ---------------------------------------------------------------- 4. bundle
+if (-not $SkipPrepareBundle) {
+  Write-Step 'prepare-bundle.ps1'
+  & (Join-Path $PSScriptRoot 'prepare-bundle.ps1')
+}
+
+# ---------------------------------------------------------------- 5. signing certificate
+$importedCert = $null
+$signed = $false
+function Remove-ImportedCertificate($Cert) {
+  if (-not $Cert) { return }
+  try {
+    # Delete the persisted private key first (CNG or CSP), then the store entry.
+    $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($Cert)
+    if ($rsa -is [Security.Cryptography.RSACng]) { $rsa.Key.Delete() }
+    elseif ($rsa -is [Security.Cryptography.RSACryptoServiceProvider]) { $rsa.PersistKeyInCsp = $false; $rsa.Clear() }
+  } catch { Write-Warning "Could not delete the imported private key: $($_.Exception.Message)" }
+  $store = New-Object Security.Cryptography.X509Certificates.X509Store('My', 'CurrentUser')
+  $store.Open('ReadWrite')
+  try { $store.Remove($Cert) } finally { $store.Close() }
+  Write-Host "Removed signing certificate $($Cert.Thumbprint) from Cert:\CurrentUser\My"
+}
+
+try {
+  if ($PfxPath) {
+    Write-Step 'Importing signing certificate'
+    if (-not (Test-Path $PfxPath)) { throw "PFX not found: $PfxPath" }
+    $plain = ''
+    if ($PfxPassword) { $plain = (New-Object System.Net.NetworkCredential('', $PfxPassword)).Password }
+    $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]'UserKeySet, PersistKeySet'
+    $collection = New-Object Security.Cryptography.X509Certificates.X509Certificate2Collection
+    $collection.Import((Resolve-Path $PfxPath).Path, $plain, $flags)
+    $plain = $null
+    $leaf = $collection | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+    if (-not $leaf) { throw 'The PFX contains no certificate with a private key.' }
+    $store = New-Object Security.Cryptography.X509Certificates.X509Store('My', 'CurrentUser')
+    $store.Open('ReadWrite')
+    try { $store.Add($leaf) } finally { $store.Close() }
+    $importedCert = $leaf
+    $CertificateThumbprint = $leaf.Thumbprint
+    Write-Host "Imported $($leaf.Subject) ($CertificateThumbprint), expires $($leaf.NotAfter.ToString('yyyy-MM-dd'))"
+  }
+  if ($CertificateThumbprint) {
+    $CertificateThumbprint = ($CertificateThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+    $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $CertificateThumbprint } | Select-Object -First 1
+    if (-not $cert) { throw "Certificate $CertificateThumbprint is not in Cert:\CurrentUser\My (ClickOnce signing looks there)." }
+    if (-not $cert.HasPrivateKey) { throw "Certificate $CertificateThumbprint has no private key." }
+    if ($cert.NotAfter -lt (Get-Date)) { throw "Certificate $CertificateThumbprint expired on $($cert.NotAfter)." }
+    $signed = $true
+    Write-Host "Signing with $($cert.Subject)"
+  } else {
+    Write-Warning 'No certificate: the release is UNSIGNED (installs show "Unknown publisher").'
+  }
+
+  # -------------------------------------------------------------- 6. msbuild /t:Publish
+  Write-Step "msbuild /t:Publish (ClickOnce $Version)"
+  if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
+  $msbuildArgs = @(
+    $project, '/restore', '/t:Publish', '/nologo', '/v:minimal', '/m',
+    '/p:PublishProfile=ClickOnce',
+    '/p:Configuration=Release',
+    "/p:SochaBuildNumber=$($parts[2])",
+    "/p:ApplicationVersion=$Version",
+    "/p:MinimumRequiredVersion=$Version",
+    "/p:Version=$displayVersion",
+    "/p:FileVersion=$Version",
+    "/p:AssemblyVersion=$Version",
+    "/p:SochaPrereqDotNet=$($prereqDotNet.ToString().ToLowerInvariant())",
+    "/p:SochaPrereqWebView2=$($prereqWebView2.ToString().ToLowerInvariant())"
+  )
+  if ($signed) {
+    $msbuildArgs += @(
+      '/p:SignManifests=true',
+      "/p:ManifestCertificateThumbprint=$CertificateThumbprint",
+      "/p:ManifestTimestampUrl=$TimestampUrl"
+    )
+  }
+  & $MSBuildPath @msbuildArgs
+  if ($LASTEXITCODE -ne 0) { throw "msbuild failed with exit code $LASTEXITCODE" }
+} finally {
+  Remove-ImportedCertificate $importedCert
+}
+
+# ---------------------------------------------------------------- 7. check the ClickOnce output
+$appFolderName = 'SochaDiff_' + ($Version -replace '\.', '_')
+$appFolder = Join-Path $publishDir "Application Files\$appFolderName"
+foreach ($p in (Join-Path $publishDir 'SochaDiff.application'), $appFolder) {
+  if (-not (Test-Path $p)) { throw "Expected ClickOnce output is missing: $p" }
+}
+$deployManifest = [xml](Get-Content -Raw (Join-Path $publishDir 'SochaDiff.application'))
+$idVersion  = $deployManifest.SelectSingleNode("/*[local-name()='assembly']/*[local-name()='assemblyIdentity']").GetAttribute('version')
+$minVersion = $deployManifest.SelectSingleNode("//*[local-name()='deployment']").GetAttribute('minimumRequiredVersion')
+if ($idVersion -ne $Version) { throw "SochaDiff.application has version $idVersion, expected $Version." }
+if ($minVersion -ne $Version) { Write-Warning "SochaDiff.application minimumRequiredVersion is '$minVersion' (expected $Version)." }
+
+# ---------------------------------------------------------------- 8. assemble desktop/out/site
+Write-Step "Assembling $OutDir"
 if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 Copy-Item -Recurse -Force (Join-Path $siteSrc '*') $OutDir
-Copy-Item -Recurse -Force (Join-Path $publishDir '*') $OutDir
+Get-ChildItem -Force $publishDir | ForEach-Object {
+  if (Test-Path (Join-Path $OutDir $_.Name)) { Write-Warning "ClickOnce output overwrites site/$($_.Name)" }
+  Copy-Item -Recurse -Force $_.FullName $OutDir
+}
 
-# ---- 4. measure + stamp -------------------------------------------------------------------
-$payloadBytes = (Get-ChildItem -LiteralPath $versionFolder -Recurse -File | Measure-Object -Sum Length).Sum
-$payloadMB = [math]::Round($payloadBytes / 1MB, 1)
-$sizeText = "about $payloadMB MB"
-$index = Join-Path $OutDir 'index.html'
-$html = [IO.File]::ReadAllText($index)
+# App size = what a first install downloads (the versioned Application Files folder).
+$appFiles = Get-ChildItem -Recurse -File (Join-Path $OutDir "Application Files\$appFolderName")
+$appBytes = [long]($appFiles | Measure-Object -Property Length -Sum).Sum
+$appMB = [math]::Round($appBytes / 1MB, 1)
+$sizeText = 'about {0} MB' -f [math]::Max(1, [math]::Round($appBytes / 1MB))
+
+$info = [ordered]@{
+  version                = $Version
+  displayVersion         = $displayVersion
+  minimumRequiredVersion = $Version
+  commit                 = $commit
+  publishedAt            = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+  signed                 = $signed
+  appSizeBytes           = $appBytes
+  appFiles               = $appFiles.Count
+  prerequisites          = [ordered]@{ dotnetDesktopRuntime = '10.0 x64'; webView2 = 'Evergreen'; nodeMinimumMajor = 20 }
+}
+$utf8 = New-Object Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $OutDir 'version.json'), ($info | ConvertTo-Json -Depth 4) + "`n", $utf8)
+
+$indexPath = Join-Path $OutDir 'index.html'
+$html = [IO.File]::ReadAllText($indexPath)
 $html = [regex]::Replace($html, '<!--app-version-->.*?<!--/app-version-->', "<!--app-version-->$displayVersion<!--/app-version-->")
 $html = [regex]::Replace($html, '<!--app-size-->.*?<!--/app-size-->', "<!--app-size-->$sizeText<!--/app-size-->")
 if ($signed) {
-  # Signed: drop the "Unknown publisher" notice.
-  $html = [regex]::Replace($html, '(?s)\s*<!-- UNSIGNED-NOTICE:.*?<!-- /UNSIGNED-NOTICE -->', '')
+  $html = [regex]::Replace($html, '[ \t]*<!-- UNSIGNED-NOTICE:.*?<!-- /UNSIGNED-NOTICE -->[ \t]*\r?\n?', '',
+    [Text.RegularExpressions.RegexOptions]::Singleline)
 }
-[IO.File]::WriteAllText($index, $html, (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText($indexPath, $html, $utf8)
 
-$commit = ''
-try { $commit = (git -C $repoRoot rev-parse --short HEAD 2>$null) } catch { }
-[ordered]@{
-  version            = $displayVersion
-  applicationVersion = $appVersion
-  build              = $Build
-  commit             = $commit
-  publishedAt        = (Get-Date).ToUniversalTime().ToString('o')
-  appPayloadBytes    = $payloadBytes
-  appPayloadMB       = $payloadMB
-  signed             = $signed
-  setupPrerequisites = @(@(if ($prereqDotNet) { '.NET 10 Desktop Runtime x64' }) + @(if ($prereqWebView) { 'WebView2 Runtime' }))
-} | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutDir 'version.json')
-
-$fileCount = (Get-ChildItem -Recurse -File $OutDir).Count
-Write-Host ""
-Write-Host "Site ready: $OutDir ($fileCount files)"
-Write-Host "  version $appVersion, app payload $payloadBytes bytes ($sizeText), signed: $signed"
-Write-Host "  upload the folder CONTENTS to the IIS root; SochaDiff.application last (deploy-site.ps1 does this)"
-
-if ($env:GITHUB_OUTPUT) {
-  "version=$displayVersion"        | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-  "application_version=$appVersion" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-  "payload_mb=$payloadMB"           | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-  "out_dir=$OutDir"                 | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-}
+# ---------------------------------------------------------------- 9. summary
+$totalBytes = (Get-ChildItem -Recurse -File $OutDir | Measure-Object -Property Length -Sum).Sum
+$summary = @"
+Socha Diff $Version published to $OutDir
+  signed:          $signed
+  app download:    $appMB MB in $($appFiles.Count) files (Application Files\$appFolderName)
+  site total:      $([math]::Round($totalBytes / 1MB, 1)) MB
+  setup.exe prereqs: .NET 10 Desktop Runtime=$prereqDotNet, WebView2=$prereqWebView2
+Deploy the folder to the IIS site root, copying SochaDiff.application last.
+"@
+Write-Host "`n$summary" -ForegroundColor Green
 if ($env:GITHUB_STEP_SUMMARY) {
-  @(
-    "### Socha Diff $appVersion",
-    "",
-    "| | |", "|---|---|",
-    "| App payload | $payloadBytes bytes ($sizeText) |",
-    "| Signed | $signed |",
-    "| setup.exe prerequisites | .NET 10: $([bool]$prereqDotNet), WebView2: $([bool]$prereqWebView) |",
-    "| Files | $fileCount |"
-  ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ("### Socha Diff $Version`n``````text`n$summary`n``````")
+}
+if ($env:GITHUB_OUTPUT) {
+  Add-Content -Path $env:GITHUB_OUTPUT -Value "app_size_bytes=$appBytes"
+  Add-Content -Path $env:GITHUB_OUTPUT -Value "signed=$($signed.ToString().ToLowerInvariant())"
 }
