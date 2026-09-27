@@ -1,0 +1,10 @@
+{
+  "name": "inventory-service",
+  "port": 3000,
+  "currency": "USD",
+  "lowStockThreshold": 10,
+  "features": {
+    "clearance": true,
+    "audit": false
+  }
+}
