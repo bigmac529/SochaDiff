@@ -126,7 +126,7 @@ function controlGlyph(code) {
 
 // Render each whitespace/control character as a visible mark while keeping the
 // real character in the DOM so copies stay verbatim.
-function appendDecorated(container, text, ending) {
+function appendDecorated(container, text) {
   let buffer = "";
   const flush = () => {
     if (buffer) {
@@ -158,11 +158,38 @@ function appendDecorated(container, text, ending) {
     container.appendChild(span);
   }
   flush();
-  if (ending === "crlf" || ending === "lf") {
-    const eol = el("span", "ws-eol");
-    eol.dataset.eol = ending === "crlf" ? "\u21B5" : "\u2193";
-    container.appendChild(eol);
+}
+
+// Every line that ends in CRLF/LF gets a trailing one-character EOL cell: a
+// real NBSP inside span.eol, so the newline is a selectable character (native
+// caret placement, ::selection paint) exactly like any other character. The
+// visible glyph (whitespace chars on) is drawn over it by .ws-eol::after.
+// lineTextFromContent strips the cell; copy emits the file's own CRLF/LF for
+// a line only when isEolSelected says its cell is inside the selection.
+const EOL_GLYPHS = { crlf: "\u21B5", lf: "\u2193" };
+let eolCellProto = null;
+function appendEolCell(content, ending, changed) {
+  if (ending !== "crlf" && ending !== "lf") return null;
+  if (!eolCellProto) {
+    eolCellProto = document.createElement("span");
+    eolCellProto.className = "eol";
+    eolCellProto.textContent = "\u00a0";
   }
+  const eol = eolCellProto.cloneNode(true);
+  if (showWhitespace) {
+    eol.classList.add("ws-eol");
+    eol.dataset.eol = EOL_GLYPHS[ending];
+  }
+  if (changed) eol.classList.add("eol-changed");
+  // A blank line is just its newline: the cell doubles as the selection pad.
+  if (content.firstChild === null) content.classList.add("eol-only");
+  content.appendChild(eol);
+  return eol;
+}
+
+function eolCellOf(content) {
+  const last = content && content.lastChild;
+  return last && last.nodeType === Node.ELEMENT_NODE && last.classList.contains("eol") ? last : null;
 }
 
 function characterSegments(left, right) {
@@ -242,7 +269,8 @@ function ensureSelectionPad(content) {
 function lineTextFromContent(textContent) {
   if (!textContent) return "";
   if (textContent.dataset.selPad === "1") return "";
-  return textContent.textContent;
+  const text = textContent.textContent;
+  return eolCellOf(textContent) ? text.slice(0, -1) : text;
 }
 
 // True when a replace pair's line endings differ and should get the
@@ -258,24 +286,18 @@ function textTd(className, text, ending, segments, eolChanged) {
   if (segments) {
     for (const segment of segments) {
       const span = el("span", segment.common ? "diff-common" : "diff-changed");
-      if (showWhitespace) appendDecorated(span, segment.text, "");
+      if (showWhitespace) appendDecorated(span, segment.text);
       else span.textContent = segment.text;
       content.appendChild(span);
     }
-    const hasEnding = ending === "crlf" || ending === "lf";
-    if (hasEnding && (showWhitespace || eolChanged)) {
-      // With whitespace chars off, a differing ending still gets a blank
-      // one-character cell so the change stays visible.
-      const eol = el("span", showWhitespace ? "ws-eol" : "eol-blank");
-      if (showWhitespace) eol.dataset.eol = ending === "crlf" ? "\u21B5" : "\u2193";
-      if (eolChanged) eol.classList.add("eol-changed");
-      content.appendChild(eol);
-    }
   } else if (showWhitespace) {
-    appendDecorated(content, raw, /\bempty\b/.test(className || "") ? "" : ending || "");
-  } else {
+    appendDecorated(content, raw);
+  } else if (raw) {
     content.textContent = raw;
   }
+  // With whitespace chars off a differing ending is still visible: the blank
+  // EOL cell carries the .eol-changed emphasis.
+  if (!/\bempty\b/.test(className || "")) appendEolCell(content, ending, !!eolChanged);
   ensureSelectionPad(content);
   cell.appendChild(content);
   return cell;
@@ -941,10 +963,22 @@ function adjacentSelectionAllowsGap(rowEls, gapIdx, firstIdx, lastIdx, selection
     const tr = rowEls[i];
     const tc = tr && tr.querySelector(".text-content");
     if (!tc) return false;
-    return isTextContentFullySelected(selection, tc);
+    return isGapNeighborFullySelected(selection, tc, i < gapIdx);
   };
   if (aboveIn && !neighborFullySelected(above)) return false;
   if (belowIn && !neighborFullySelected(below)) return false;
+  return true;
+}
+
+// "Fully selected" for the gap gate means the neighbor's text plus its
+// newline toward the gap: the line above a gap must have its EOL cell
+// selected (the hidden lines start after that newline); the line below only
+// needs its text from column 0, since its own newline points away from the
+// gap. Rows without an EOL cell (last line with no final newline, placeholder
+// rows) fall back to the text-only check.
+function isGapNeighborFullySelected(selection, textContent, aboveGap) {
+  if (!isTextContentFullySelected(selection, textContent)) return false;
+  if (aboveGap && eolCellOf(textContent)) return isEolSelected(selection, textContent);
   return true;
 }
 
@@ -1182,8 +1216,8 @@ function clampSelectionToArmedGapNeighbors(rowEls, selectedFirst, selectedLast, 
 
     for (const i of neighborIdxs) {
       const tc = rowEls[i] && rowEls[i].querySelector(".text-content");
-      if (!tc || lineTextFromContent(tc) === "") continue;
-      if (isTextContentFullySelected(selection, tc)) continue;
+      if (!tc || (lineTextFromContent(tc) === "" && !eolCellOf(tc))) continue;
+      if (isGapNeighborFullySelected(selection, tc, i < gapIdx)) continue;
       // Still overlapping / in-range but not full — re-extend to the whole line
       // so a peeled suffix cannot coexist with an armed gap.
       if (!selectionOverlapsTextContent(selection, tc) && !isPartialTextContentSelection(selection, tc)) {
@@ -1470,6 +1504,23 @@ function gapHiddenText(file, gapIndex, side) {
 // True when the selection lives entirely inside one .text-content but does not
 // cover that whole line — word / character selects must copy verbatim, not the
 // full rebuilt line (multi-row copy still joins whole lines below).
+// True when the line's EOL cell (its newline) lies wholly inside the
+// selection. Range.comparePoint is an exact DOM boundary comparison, so a
+// selection ending at the end of the text (just before the cell) reports
+// false, and one ending after the cell, on the next row, or in gap chrome
+// below reports true.
+function isEolSelected(selection, textContent) {
+  const eol = eolCellOf(textContent);
+  const text = eol && eol.firstChild;
+  if (!text || !selection || selection.isCollapsed || !selection.rangeCount) return false;
+  try {
+    const range = selection.getRangeAt(0);
+    return range.comparePoint(text, 0) === 0 && range.comparePoint(text, 1) === 0;
+  } catch {
+    return false;
+  }
+}
+
 function isPartialTextContentSelection(selection, textContent) {
   if (!selection || !textContent || selection.isCollapsed || !selection.rangeCount) return false;
   const anchorEl =
@@ -1489,9 +1540,56 @@ function isPartialTextContentSelection(selection, textContent) {
   if (selection.containsNode(textContent, false)) return false;
   const full = lineTextFromContent(textContent);
   if (full === "") return false; // blank / pad-only row — keep full-line path
-  const native = selection.toString();
-  if (native === full) return false;
-  return true;
+  // Character offsets, not toString(): the EOL cell's NBSP would make a
+  // whole-line-plus-newline selection look partial.
+  const [start, end] = selectedTextOffsets(selection, textContent);
+  if (start < 0 || end < 0) return selection.toString() !== full;
+  return !(start <= 0 && end >= full.length);
+}
+
+// [start, end] character offsets of the selection within textContent's
+// concatenated text (the EOL cell counts as one character after the text).
+function selectedTextOffsets(selection, textContent) {
+  try {
+    const range = selection.getRangeAt(0);
+    return [
+      textOffsetInContent(textContent, range.startContainer, range.startOffset),
+      textOffsetInContent(textContent, range.endContainer, range.endOffset),
+    ];
+  } catch {
+    return [-1, -1];
+  }
+}
+
+// Clipboard text for a selection within one visible row: the selected
+// characters of the line, plus the file's own line terminator only when the
+// row's EOL cell is selected.
+function singleRowCopyText(selection, textContent, ending) {
+  const full = lineTextFromContent(textContent);
+  let [start, end] = selectedTextOffsets(selection, textContent);
+  if (start < 0) start = 0;
+  if (end < 0) end = full.length;
+  const body = full.slice(Math.min(start, full.length), Math.min(Math.max(start, end), full.length));
+  return body + (isEolSelected(selection, textContent) ? eolString(ending) : "");
+}
+
+// A manual drag over every visible row copies the whole side, but if it
+// stops before the final line's newline (no trailing gap, so that line is
+// the file's last visible line) the terminator is left off.
+function trimUnselectedFinalEol(text, scope, selection) {
+  const rowEls = scope.querySelectorAll("tbody > tr");
+  for (let i = rowEls.length - 1; i >= 0; i--) {
+    const tr = rowEls[i];
+    if (tr.classList.contains("gap-toggle") || tr.classList.contains("gap")) return text;
+    if (tr.dataset.hasText === "false") continue;
+    const tc = tr.querySelector(".text-content");
+    if (!tc) return text;
+    if (!eolCellOf(tc) || isEolSelected(selection, tc)) return text;
+    const eol = eolString(tr.dataset.ending);
+    const tail = lineTextFromContent(tc) + eol;
+    return eol && text.endsWith(tail) ? text.slice(0, -eol.length) : text;
+  }
+  return text;
 }
 
 function copyDiffSelection(event, scroll, file) {
@@ -1507,7 +1605,9 @@ function copyDiffSelection(event, scroll, file) {
   const scope = scopeOf(anchorElement);
   if (scope && scroll.contains(scope) && (wholeFileScope === scope || selectionSpansWholePane(selection, scope))) {
     const side = scope.classList.contains("right-pane") ? "right" : "left";
-    event.clipboardData.setData("text/plain", fullSideText(file, side));
+    let text = fullSideText(file, side);
+    if (wholeFileScope !== scope) text = trimUnselectedFinalEol(text, scope, selection);
+    event.clipboardData.setData("text/plain", text);
     event.preventDefault();
     return;
   }
@@ -1526,30 +1626,35 @@ function copyDiffSelection(event, scroll, file) {
 
     if (range) {
       if (rowRangeCoversAllTextRows(rowEls, range[0], range[1])) {
-        event.clipboardData.setData("text/plain", fullSideText(file, side));
+        event.clipboardData.setData("text/plain", trimUnselectedFinalEol(fullSideText(file, side), scope, selection));
         event.preventDefault();
         return;
       }
       // Extend for proximity-armed edge gaps, then include any collapsed gap
       // the selection spans (interior) or armed — hidden text from gap.rows.
       const [firstIdx, lastIdx] = extendRangeAcrossArmedGaps(rowEls, range[0], range[1], false);
-      // Single visible text row with a word/char (partial) selection: copy the
-      // native selected text, not the rebuilt full line + EOL.
+      // Single visible text row: copy exactly the selected characters, plus
+      // the newline only when its EOL cell is selected.
       if (firstIdx === lastIdx) {
-        const textContent = rowEls[firstIdx].querySelector(".text-content");
-        if (textContent && isPartialTextContentSelection(selection, textContent)) {
-          event.clipboardData.setData("text/plain", selection.toString());
+        const tr = rowEls[firstIdx];
+        const textContent = tr.querySelector(".text-content");
+        if (textContent) {
+          const text = tr.dataset.hasText === "false" ? "" : singleRowCopyText(selection, textContent, tr.dataset.ending);
+          event.clipboardData.setData("text/plain", text);
           event.preventDefault();
           return;
         }
       }
+      // Multi-row: whole lines (existing convention), each followed by its own
+      // CRLF/LF only when that line's EOL cell is selected — in practice every
+      // row but possibly the last.
       const parts = [];
       for (let i = firstIdx; i <= lastIdx; i++) {
         const tr = rowEls[i];
         if (tr.dataset.hasText === "false") continue; // no line exists on this side; contributes nothing
         const textContent = tr.querySelector(".text-content");
         if (textContent) {
-          parts.push(lineTextFromContent(textContent) + eolString(tr.dataset.ending));
+          parts.push(lineTextFromContent(textContent) + (isEolSelected(selection, textContent) ? eolString(tr.dataset.ending) : ""));
         } else if (isIncludedGapRow(tr, false, i, firstIdx, lastIdx, rowEls, selection)) {
           const hidden = gapHiddenText(file, Number(tr.dataset.gapIndex), side);
           if (hidden) parts.push(hidden);
@@ -1858,12 +1963,14 @@ function flushWsDecorateChunk(deadline) {
     const content = wsDecorateQueue.shift();
     if (!content || !content.isConnected || content.dataset.wsPending !== "1") continue;
     const ending = content.dataset.wsEnding || "";
-    const raw = content.dataset.selPad === "1" ? "" : content.textContent;
+    const raw = lineTextFromContent(content);
     content.textContent = "";
+    content.classList.remove("eol-only");
     delete content.dataset.wsPending;
     delete content.dataset.wsEnding;
     delete content.dataset.selPad;
-    appendDecorated(content, raw, ending);
+    appendDecorated(content, raw);
+    appendEolCell(content, ending, false);
     ensureSelectionPad(content);
     n++;
   }
@@ -1872,16 +1979,20 @@ function flushWsDecorateChunk(deadline) {
 
 function fillGapTextContent(content, text, ending, lazyWs) {
   const raw = text === null || text === undefined ? "" : text;
+  content.classList.remove("eol-only");
   if (lazyWs && showWhitespace) {
     content.textContent = raw;
+    appendEolCell(content, ending || "", false);
     ensureSelectionPad(content);
     enqueueWsDecorate(content, ending || "");
   } else if (showWhitespace) {
     content.textContent = "";
-    appendDecorated(content, raw, ending || "");
+    appendDecorated(content, raw);
+    appendEolCell(content, ending || "", false);
     ensureSelectionPad(content);
   } else {
     content.textContent = raw;
+    appendEolCell(content, ending || "", false);
     ensureSelectionPad(content);
   }
 }

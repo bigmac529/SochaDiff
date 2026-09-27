@@ -812,13 +812,27 @@ button {
   pointer-events: none;
 }
 
+/* One-character EOL cell (a real NBSP) after every line with a CRLF/LF, so
+   the newline is selectable and paints with ::selection like other text.
+   Only the glyph variant is positioned (it anchors ::after); keeping the
+   plain cell static avoids a positioned box per line on large expands. */
+.text-content > .ws-eol {
+  position: relative;
+}
+
+/* The EOL glyph is drawn over the cell's NBSP rather than after it, so the
+   cell stays exactly one character wide. */
 .ws-eol::after {
   content: attr(data-eol);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  text-align: center;
   color: var(--num);
   pointer-events: none;
   /* Stretch vertically only, scaling from its own center so the glyph's
      midpoint stays anchored to the text line's vertical middle. */
-  display: inline-block;
   transform: scaleY(1.6);
   transform-origin: center;
 }
@@ -1287,16 +1301,9 @@ tr.replace td.text.right .diff-changed {
 }
 
 /* Differing line endings on a replace pair get the same emphasis as changed
-   characters: the EOL glyph when whitespace chars are shown, otherwise a
-   blank one-character cell where the ending sits. Unified renders the pair
+   characters on the EOL cell: under the glyph when whitespace chars are
+   shown, otherwise as a blank one-character cell. Unified renders the pair
    as delete (A) / insert (B) rows. */
-.text-content .eol-blank {
-  display: inline-block;
-  width: 1ch;
-  min-height: 1.5em;
-  vertical-align: top;
-}
-
 tr.replace td.text.left .eol-changed,
 .unified-diff tr.delete td.text .eol-changed {
   background: rgba(255, 120, 120, 0.4);
@@ -1414,8 +1421,10 @@ body.drag-selecting tr.gap-toggle:not(.gap-armed):hover td {
   color: transparent;
 }
 
-/* Whitespace-only rows without a .sel-pad: 1ch strip via ::after. */
-.text-content.ws-line-selected:not([data-sel-pad="1"])::after {
+/* Whitespace-only rows without a .sel-pad: 1ch strip via ::after. A blank
+   line (.eol-only) is just its newline: the EOL cell itself paints, and only
+   when that newline is actually selected. */
+.text-content.ws-line-selected:not([data-sel-pad="1"]):not(.eol-only)::after {
   content: "";
   position: absolute;
   left: 8px; /* match .text-content horizontal padding */
@@ -1433,6 +1442,11 @@ body.drag-selecting tr.gap-toggle:not(.gap-armed):hover td {
 .diff-table .text-content.ws-line-selected *::selection {
   background: transparent;
   color: inherit;
+}
+
+/* ...except the newline cell, which paints natively on every row. */
+.diff-table .text-content.ws-line-selected > .eol::selection {
+  background: var(--selection-tint);
 }
 
 /* A collapsed gap the drag came close enough to — its hidden lines will be

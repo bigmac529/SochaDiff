@@ -179,7 +179,7 @@ async function paneSnapshot(page, side, fileName) {
           .map((tr, i) => {
             const tc = tr.querySelector(".text-content");
             if (!tc) return -1;
-            const text = tc.dataset.selPad === "1" ? "" : tc.textContent;
+            const text = (tc.dataset.selPad === "1" ? "" : (tc.textContent || "").slice(0, tc.lastElementChild && tc.lastElementChild.classList.contains("eol") ? -1 : undefined)); // line text without the EOL cell
             return text.trim() === "" ? i : -1;
           })
           .filter((i) => i >= 0),
@@ -276,7 +276,7 @@ async function pointBeforeEndChars(page, side, rowIndex, n, fileName) {
       const tr = pane && pane.querySelectorAll("tbody > tr")[idx];
       const tc = tr && tr.querySelector(".text-content");
       if (!tc) return null;
-      const full = tc.dataset.selPad === "1" ? "" : tc.textContent || "";
+      const full = (tc.dataset.selPad === "1" ? "" : (tc.textContent || "").slice(0, tc.lastElementChild && tc.lastElementChild.classList.contains("eol") ? -1 : undefined)); // line text without the EOL cell
       if (full.length <= chars) return null;
       const target = full.length - chars;
       // Map character offset → text node + local offset across nested spans.
@@ -346,7 +346,7 @@ async function gapNeighborInvariant(page, side, gapRowIndex, neighborRowIndex, f
         const focusEl =
           sel.focusNode &&
           (sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement);
-        const full = tc.dataset.selPad === "1" ? "" : tc.textContent || "";
+        const full = (tc.dataset.selPad === "1" ? "" : (tc.textContent || "").slice(0, tc.lastElementChild && tc.lastElementChild.classList.contains("eol") ? -1 : undefined)); // line text without the EOL cell
         if (
           anchorEl &&
           focusEl &&
@@ -2521,8 +2521,10 @@ async function main() {
         );
         if (!details) return [];
         const pane = details.querySelector(".left-pane.select-scope");
+        // Placeholder rows paint their .sel-pad; a blank line is just its
+        // newline, so its one-character EOL cell is the painted box.
         return Array.from(pane.querySelectorAll(".text-content.ws-line-selected")).map((tc) => {
-          const pad = tc.querySelector(".sel-pad");
+          const pad = tc.querySelector(".sel-pad") || tc.querySelector(".eol");
           const box = (pad || tc).getBoundingClientRect();
           return {
             tcW: Math.round(tc.getBoundingClientRect().width),
