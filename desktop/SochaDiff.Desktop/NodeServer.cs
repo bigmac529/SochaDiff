@@ -78,9 +78,14 @@ internal sealed class NodeServer : IDisposable
         void OnExited(object? sender, EventArgs e)
         {
             if (Interlocked.Exchange(ref reported, 1) != 0) return;
+            if (_stopping)
+            {
+                Log("host: node stopped");
+                return;
+            }
             int code = SafeExitCode(ready);
             Log($"host: node exited with code {code}");
-            if (!_stopping) UnexpectedExit?.Invoke(code);
+            UnexpectedExit?.Invoke(code);
         }
         ready.Exited += OnExited;
         if (ready.HasExited) OnExited(null, EventArgs.Empty);

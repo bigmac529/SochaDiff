@@ -156,9 +156,12 @@ public partial class MainWindow : Window
         };
     }
 
-    private static void FilterContextMenu(CoreWebView2ContextMenuRequestedEventArgs args)
+    private void FilterContextMenu(CoreWebView2ContextMenuRequestedEventArgs args)
     {
         var items = args.MenuItems;
+#if DEBUG
+        _server.Log("host: context menu items: " + string.Join(", ", items.Select(i => i.Name)));
+#endif
         for (int i = items.Count - 1; i >= 0; i--)
         {
             if (HiddenMenuItems.Contains(items[i].Name)) items.RemoveAt(i);
