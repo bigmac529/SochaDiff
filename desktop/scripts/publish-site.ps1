@@ -15,9 +15,11 @@
        ApplicationVersion, MinimumRequiredVersion (so installed clients must update at their
        next launch) and the assembly Version/FileVersion/AssemblyVersion;
        optional signing: -CertificateThumbprint (cert already in Cert:\CurrentUser\My) or
-       -PfxPath/-PfxPassword (imported for the build and removed again afterwards). Signing
+       -PfxPath/-PfxPassword (imported for the build and removed again afterwards; the PFX's
+       own thumbprint is used, so a stale -CertificateThumbprint cannot break it). Signing
        covers the deployment + application manifests, SochaDiff.exe, the entry point
-       assembly and setup.exe (MSBuild's ClickOnce signing);
+       assembly and setup.exe (MSBuild's ClickOnce signing). A signed build fails if the
+       deployment manifest ends up without a signature;
     4. copies site/ and then the ClickOnce output (SochaDiff.application, setup.exe,
        Application Files/SochaDiff_a_b_c_d/) into desktop/out/site/, and stamps the output copy
        of the site: version.json (version, commit, time, measured app size, signed flag),
@@ -25,8 +27,8 @@
        when the release is signed. The committed site/ files are not modified.
 
   Deploy desktop/out/site/ with the manifest (SochaDiff.application) copied LAST, so a client
-  never sees a manifest that points at files that are not uploaded yet (the GitHub workflow
-  does this with a two-phase msdeploy sync).
+  never sees a manifest that points at files that are not uploaded yet: deploy-site.ps1 does
+  this (the GitHub workflow runs it on the self-hosted runner on the web server).
 
 .EXAMPLE
   pwsh desktop/scripts/publish-site.ps1 -Build 42
@@ -53,6 +55,9 @@ param(
   # Signing, option 2: a PFX file, imported into Cert:\CurrentUser\My for the build and removed afterwards.
   [string]$PfxPath,
   [SecureString]$PfxPassword,
+  # Optional: the thumbprint the release is expected to be signed with. A different certificate
+  # only produces a warning (ClickOnce clients installed with another certificate cannot update).
+  [string]$ExpectedCertificateThumbprint,
   # RFC 3161 timestamp server used for manifests and Authenticode signatures.
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   # Copy desktop/bootstrapper/* (the WebView2 setup.exe prerequisite) into Visual Studio's
@@ -194,12 +199,23 @@ try {
     $plain = $null
     $leaf = $collection | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
     if (-not $leaf) { throw 'The PFX contains no certificate with a private key.' }
-    $store = New-Object Security.Cryptography.X509Certificates.X509Store('My', 'CurrentUser')
-    $store.Open('ReadWrite')
-    try { $store.Add($leaf) } finally { $store.Close() }
-    $importedCert = $leaf
+    # The PFX decides: a -CertificateThumbprint that does not match it is ignored.
+    $requested = ($CertificateThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+    if ($requested -and $requested -ne $leaf.Thumbprint) {
+      Write-Warning "-CertificateThumbprint $requested does not match the PFX ($($leaf.Thumbprint)); signing with the PFX certificate."
+    }
     $CertificateThumbprint = $leaf.Thumbprint
-    Write-Host "Imported $($leaf.Subject) ($CertificateThumbprint), expires $($leaf.NotAfter.ToString('yyyy-MM-dd'))"
+    $existing = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $leaf.Thumbprint -and $_.HasPrivateKey } | Select-Object -First 1
+    if ($existing) {
+      # Already installed (e.g. a developer machine): use it and leave it in place afterwards.
+      Write-Host "Certificate $CertificateThumbprint is already in Cert:\CurrentUser\My; using it (not importing or removing it)."
+    } else {
+      $store = New-Object Security.Cryptography.X509Certificates.X509Store('My', 'CurrentUser')
+      $store.Open('ReadWrite')
+      try { $store.Add($leaf) } finally { $store.Close() }
+      $importedCert = $leaf
+      Write-Host "Imported $($leaf.Subject) ($CertificateThumbprint), expires $($leaf.NotAfter.ToString('yyyy-MM-dd'))"
+    }
   }
   if ($CertificateThumbprint) {
     $CertificateThumbprint = ($CertificateThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
@@ -208,7 +224,12 @@ try {
     if (-not $cert.HasPrivateKey) { throw "Certificate $CertificateThumbprint has no private key." }
     if ($cert.NotAfter -lt (Get-Date)) { throw "Certificate $CertificateThumbprint expired on $($cert.NotAfter)." }
     $signed = $true
-    Write-Host "Signing with $($cert.Subject)"
+    Write-Host "Signing with $($cert.Subject) ($CertificateThumbprint)"
+    $expected = ($ExpectedCertificateThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+    if ($expected -and $expected -ne $CertificateThumbprint) {
+      $msg = "Signing certificate $CertificateThumbprint is not the expected $expected. Installed ClickOnce clients signed with the other certificate will not accept this update (they must reinstall). Update the expected thumbprint only if the certificate change is intended."
+      if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::warning::$msg" } else { Write-Warning $msg }
+    }
   } else {
     Write-Warning 'No certificate: the release is UNSIGNED (installs show "Unknown publisher").'
   }
@@ -253,6 +274,26 @@ $idVersion  = $deployManifest.SelectSingleNode("/*[local-name()='assembly']/*[lo
 $minVersion = $deployManifest.SelectSingleNode("//*[local-name()='deployment']").GetAttribute('minimumRequiredVersion')
 if ($idVersion -ne $Version) { throw "SochaDiff.application has version $idVersion, expected $Version." }
 if ($minVersion -ne $Version) { Write-Warning "SochaDiff.application minimumRequiredVersion is '$minVersion' (expected $Version)." }
+if ($signed) {
+  # Make sure signing really happened (a property typo or an overriding profile would otherwise
+  # silently produce an unsigned release).
+  $sig = $deployManifest.SelectSingleNode("//*[local-name()='Signature']")
+  $pub = $deployManifest.SelectSingleNode("//*[local-name()='publisherIdentity']")
+  if (-not $sig -or -not $pub) { throw 'Signing was requested but SochaDiff.application has no signature/publisherIdentity.' }
+  Write-Host "SochaDiff.application is signed by $($pub.GetAttribute('name'))"
+  $exeDeploy = @('SochaDiff.exe.deploy', 'SochaDiff.exe') | ForEach-Object { Join-Path $appFolder $_ } |
+    Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-Item -LiteralPath $_ } | Select-Object -First 1
+  foreach ($file in @((Get-Item (Join-Path $publishDir 'setup.exe') -ErrorAction SilentlyContinue), $exeDeploy)) {
+    if (-not $file) { continue }
+    $auth = Get-AuthenticodeSignature -LiteralPath $file.FullName
+    if ($auth.SignerCertificate -and $auth.SignerCertificate.Thumbprint -eq $CertificateThumbprint) {
+      # Status is usually UnknownError/NotTrusted for a self-signed certificate; that is expected.
+      Write-Host "$($file.Name): Authenticode-signed by $CertificateThumbprint (status $($auth.Status))"
+    } else {
+      Write-Warning "$($file.Name) is not Authenticode-signed with $CertificateThumbprint (status $($auth.Status))."
+    }
+  }
+}
 
 # ---------------------------------------------------------------- 8. assemble desktop/out/site
 Write-Step "Assembling $OutDir"
@@ -263,6 +304,8 @@ Get-ChildItem -Force $publishDir | ForEach-Object {
   if (Test-Path (Join-Path $OutDir $_.Name)) { Write-Warning "ClickOnce output overwrites site/$($_.Name)" }
   Copy-Item -Recurse -Force $_.FullName $OutDir
 }
+# The IIS config (ClickOnce MIME types, cache rules) must always ship with the site.
+if (-not (Test-Path -LiteralPath (Join-Path $OutDir 'web.config') -PathType Leaf)) { throw "web.config is missing from $OutDir (site/web.config)." }
 
 # App size = what a first install downloads (the versioned Application Files folder).
 $appFiles = Get-ChildItem -Recurse -File (Join-Path $OutDir "Application Files\$appFolderName")
