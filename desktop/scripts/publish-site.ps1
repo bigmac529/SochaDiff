@@ -40,11 +40,13 @@
 param(
   # Full four-part version (a.b.c.d). Takes precedence over -Build.
   [string]$Version,
-  # Build number (third part); major/minor come from desktop/version.json.
-  [int]$Build = -1,
+  # Build number (third part; CI: github.run_number); major/minor come from desktop/version.json.
+  # Must be higher than the live release. Without -Version/-Build: 0, for local tests only.
+  [int]$Build = 0,
   # Output folder for the assembled site (default desktop/out/site).
   [string]$OutDir,
   # Explicit MSBuild.exe; default: msbuild on PATH, else the newest VS/Build Tools via vswhere.
+  [Alias('MSBuild')]
   [string]$MSBuildPath,
   # Signing, option 1: thumbprint of a code-signing cert (with private key) in Cert:\CurrentUser\My.
   [string]$CertificateThumbprint,
@@ -57,6 +59,7 @@ param(
   # BootstrapperPackages folder first. Needs admin rights (GitHub-hosted runners have them).
   [switch]$InstallBootstrapperPackages,
   # Use the existing desktop/bundle/ instead of running prepare-bundle.ps1.
+  [Alias('SkipPrepare')]
   [switch]$SkipPrepareBundle
 )
 
@@ -80,10 +83,10 @@ if ($env:OS -ne 'Windows_NT') { throw 'publish-site.ps1 needs Windows (Visual St
 $versionJson = Get-Content (Join-Path $desktopDir 'version.json') -Raw | ConvertFrom-Json
 if ($Version) {
   if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw "-Version must have four numeric parts (a.b.c.d), got '$Version'." }
-} elseif ($Build -ge 0) {
-  $Version = '{0}.{1}.{2}.0' -f [int]$versionJson.major, [int]$versionJson.minor, $Build
 } else {
-  throw 'Pass -Version a.b.c.d or -Build N (the version must be higher than the one already on the site).'
+  if ($Build -lt 0) { throw "-Build must be >= 0." }
+  if ($Build -eq 0) { Write-Warning 'Build number 0: fine for a local test, but never deploy it over a real release (use -Build N or -Version).' }
+  $Version = '{0}.{1}.{2}.0' -f [int]$versionJson.major, [int]$versionJson.minor, $Build
 }
 $parts = $Version.Split('.') | ForEach-Object { [int]$_ }
 if (($parts | Where-Object { $_ -gt 65535 }).Count -gt 0) { throw "Each version part must be <= 65535 ($Version)." }
@@ -116,10 +119,20 @@ Write-Host "MSBuild: $MSBuildPath"
 Write-Host "Visual Studio: $vsRoot"
 
 # ---------------------------------------------------------------- 3. setup.exe prerequisites
-# GenerateBootstrapper looks in both folders.
+# GenerateBootstrapper looks in Visual Studio's folder, the ClickOnce SDK folder and the
+# GenericBootstrapper registry paths.
 $pkgDirs = @()
 if ($vsRoot) { $pkgDirs += (Join-Path $vsRoot 'MSBuild\Microsoft\VisualStudio\BootstrapperPackages') }
 $pkgDirs += (Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\ClickOnce Bootstrapper\Packages')
+foreach ($key in 'HKLM:\SOFTWARE\Microsoft\GenericBootstrapper', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\GenericBootstrapper') {
+  if (Test-Path $key) {
+    Get-ChildItem $key -ErrorAction SilentlyContinue | ForEach-Object {
+      $p = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).Path
+      if ($p) { $pkgDirs += (Join-Path $p 'Packages') }
+    }
+  }
+}
+$pkgDirs = @($pkgDirs | Where-Object { $_ } | Select-Object -Unique)
 if ($InstallBootstrapperPackages) {
   if (-not $vsRoot) { throw 'Cannot install bootstrapper packages: Visual Studio folder unknown.' }
   $dest = $pkgDirs[0]
@@ -130,8 +143,15 @@ if ($InstallBootstrapperPackages) {
     Write-Host "  $($_.Name)"
   }
 }
-function Test-BootstrapperPackage([string]$Name) {
-  foreach ($d in $pkgDirs) { if (Test-Path (Join-Path $d "$Name\product.xml")) { return $true } }
+# Match on the ProductCode inside product.xml (folder names differ between VS versions).
+function Test-BootstrapperPackage([string]$ProductCode) {
+  $pattern = 'ProductCode\s*=\s*"' + [regex]::Escape($ProductCode) + '"'
+  foreach ($d in $pkgDirs) {
+    if (-not (Test-Path $d)) { continue }
+    foreach ($xml in Get-ChildItem $d -Filter product.xml -Recurse -Depth 1 -ErrorAction SilentlyContinue) {
+      if ((Get-Content $xml.FullName -Raw) -match $pattern) { Write-Host "setup.exe prerequisite $ProductCode ($($xml.DirectoryName))"; return $true }
+    }
+  }
   return $false
 }
 $prereqDotNet   = Test-BootstrapperPackage 'Microsoft.NetCore.DesktopRuntime.10.0.x64'
@@ -248,17 +268,21 @@ Get-ChildItem -Force $publishDir | ForEach-Object {
 $appFiles = Get-ChildItem -Recurse -File (Join-Path $OutDir "Application Files\$appFolderName")
 $appBytes = [long]($appFiles | Measure-Object -Property Length -Sum).Sum
 $appMB = [math]::Round($appBytes / 1MB, 1)
-$sizeText = 'about {0} MB' -f [math]::Max(1, [math]::Round($appBytes / 1MB))
+$sizeText = 'about {0} MB' -f $(if ($appMB -lt 10) { $appMB.ToString('0.0', [Globalization.CultureInfo]::InvariantCulture) } else { [math]::Round($appMB) })
 
+# deploy-site.ps1 reads applicationVersion (version guard).
 $info = [ordered]@{
-  version                = $Version
-  displayVersion         = $displayVersion
+  version                = $displayVersion
+  applicationVersion     = $Version
   minimumRequiredVersion = $Version
+  build                  = $parts[2]
   commit                 = $commit
   publishedAt            = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   signed                 = $signed
-  appSizeBytes           = $appBytes
+  appPayloadBytes        = $appBytes
+  appPayloadMB           = $appMB
   appFiles               = $appFiles.Count
+  setupPrerequisites     = @(@(if ($prereqDotNet) { '.NET 10 Desktop Runtime x64' }) + @(if ($prereqWebView2) { 'WebView2 Runtime' }))
   prerequisites          = [ordered]@{ dotnetDesktopRuntime = '10.0 x64'; webView2 = 'Evergreen'; nodeMinimumMajor = 20 }
 }
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -289,6 +313,12 @@ if ($env:GITHUB_STEP_SUMMARY) {
   Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ("### Socha Diff $Version`n``````text`n$summary`n``````")
 }
 if ($env:GITHUB_OUTPUT) {
-  Add-Content -Path $env:GITHUB_OUTPUT -Value "app_size_bytes=$appBytes"
-  Add-Content -Path $env:GITHUB_OUTPUT -Value "signed=$($signed.ToString().ToLowerInvariant())"
+  Add-Content -Path $env:GITHUB_OUTPUT -Value @(
+    "version=$displayVersion",
+    "application_version=$Version",
+    "payload_bytes=$appBytes",
+    "payload_mb=$appMB",
+    "signed=$($signed.ToString().ToLowerInvariant())",
+    "out_dir=$OutDir"
+  )
 }
