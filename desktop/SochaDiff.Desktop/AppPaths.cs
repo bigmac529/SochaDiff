@@ -15,9 +15,8 @@ internal static class AppPaths
 
     public static string PreviousServerLog => Path.Combine(DataDir, "server.previous.log");
 
-    /// <summary>Bundled node.exe; SOCHA_DESKTOP_NODE overrides it for development.</summary>
-    public static string NodeExe =>
-        Env("SOCHA_DESKTOP_NODE") ?? Path.Combine(AppContext.BaseDirectory, "node", "node.exe");
+    /// <summary>node.exe staged by prepare-bundle -IncludeNode (portable builds only; normally absent).</summary>
+    public static string BundledNodeExe => Path.Combine(AppContext.BaseDirectory, "node", "node.exe");
 
     /// <summary>Bundled web app folder; SOCHA_DESKTOP_APP_DIR overrides it (e.g. a repo checkout).</summary>
     public static string AppDir =>
@@ -25,7 +24,7 @@ internal static class AppPaths
 
     public static string BundleInfo => Path.Combine(AppContext.BaseDirectory, "bundle-info.json");
 
-    private static string? Env(string name)
+    internal static string? Env(string name)
     {
         var value = Environment.GetEnvironmentVariable(name);
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();

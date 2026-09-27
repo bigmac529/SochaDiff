@@ -8,7 +8,7 @@ namespace SochaDiff.Desktop;
 /// A Windows Job Object with KILL_ON_JOB_CLOSE. The only handle lives in this
 /// process, so when the app exits for any reason (normal close, crash,
 /// Stop-Process, Task Manager) the kernel closes it and kills every process in
-/// the job, i.e. the bundled node.exe.
+/// the job, i.e. the node.exe running the app server.
 /// SILENT_BREAKAWAY_OK keeps node's own children (Explorer, the default app a
 /// file is opened with, the "Open with" picker) out of the job, so they are not
 /// killed when Socha Diff closes.

@@ -37,12 +37,14 @@
         <TextBlock x:Name="ErrorLogLine" Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12"
                    Foreground="{StaticResource MutedBrush}" />
         <WrapPanel Margin="0,18,0,0">
+          <Button x:Name="DownloadRuntimeButton" Content="Get WebView2 Runtime" Visibility="Collapsed"
+                  Style="{StaticResource HostButton}" Click="DownloadRuntime_Click" />
           <Button x:Name="RetryButton" Content="Retry" Style="{StaticResource HostButton}" Click="Retry_Click" />
           <Button x:Name="OpenLogButton" Content="Open log" Style="{StaticResource HostButton}" Click="OpenLog_Click" />
           <Button x:Name="OpenLogFolderButton" Content="Open log folder" Style="{StaticResource HostButton}"
                   Click="OpenLogFolder_Click" />
-          <Button x:Name="DownloadRuntimeButton" Content="Get WebView2 Runtime" Visibility="Collapsed"
-                  Style="{StaticResource HostButton}" Click="DownloadRuntime_Click" />
+          <Button x:Name="PrerequisitesButton" Content="All prerequisites" Visibility="Collapsed"
+                  Style="{StaticResource HostButton}" Click="Prerequisites_Click" />
           <Button Content="Close" Style="{StaticResource HostButton}" Click="Close_Click" />
         </WrapPanel>
       </StackPanel>

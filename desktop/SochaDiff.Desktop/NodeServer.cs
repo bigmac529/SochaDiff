@@ -8,11 +8,11 @@ using System.Text.Json;
 
 namespace SochaDiff.Desktop;
 
-/// <summary>Raised when the bundled server cannot be started; Message is user-facing.</summary>
+/// <summary>Raised when the local server cannot be started; Message is user-facing.</summary>
 internal sealed class NodeStartException(string message, Exception? inner = null) : Exception(message, inner);
 
 /// <summary>
-/// Runs the bundled `node.exe app/server.js` on a free 127.0.0.1 port, with no
+/// Runs `node app/server.js` (the user's Node.js, see NodeLocator) on a free 127.0.0.1 port, with no
 /// console window, stdout/stderr appended to %LOCALAPPDATA%\SochaDiff\server.log,
 /// and the process held in a kill-on-close Job Object.
 /// </summary>
@@ -41,18 +41,19 @@ internal sealed class NodeServer : IDisposable
         OpenLog();
         _job ??= new JobObject();
 
-        string nodeExe = AppPaths.NodeExe;
         string serverJs = Path.Combine(AppPaths.AppDir, "server.js");
-        if (!File.Exists(nodeExe))
-            throw new NodeStartException($"The bundled Node runtime is missing:\n{nodeExe}\n\nThe app files may be incomplete; reinstall Socha Diff (developers: run desktop/scripts/prepare-bundle.ps1).");
         if (!File.Exists(serverJs))
-            throw new NodeStartException($"The bundled web app is missing:\n{serverJs}\n\nThe app files may be incomplete; reinstall Socha Diff (developers: run desktop/scripts/prepare-bundle.ps1).");
+            throw new NodeStartException($"The Socha Diff web app files are missing:\n{serverJs}\n\nThe app files may be incomplete; reinstall Socha Diff (developers: run desktop/scripts/prepare-bundle.ps1).");
 
-        Log($"host: SochaDiff {typeof(NodeServer).Assembly.GetName().Version} pid {Environment.ProcessId}; node {nodeExe}; app {AppPaths.AppDir}; data {AppPaths.DataDir}");
+        Log($"host: SochaDiff {typeof(NodeServer).Assembly.GetName().Version} pid {Environment.ProcessId}; " +
+            $".NET {Environment.Version} ({System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}); app {AppPaths.AppDir}; data {AppPaths.DataDir}");
         if (File.Exists(AppPaths.BundleInfo))
             Log("host: bundle " + File.ReadAllText(AppPaths.BundleInfo).ReplaceLineEndings(" "));
         var clickOnceVersion = Environment.GetEnvironmentVariable("ClickOnce_CurrentVersion");
         if (!string.IsNullOrEmpty(clickOnceVersion)) Log($"host: ClickOnce version {clickOnceVersion}");
+
+        // Node.js is a prerequisite (>= NodeLocator.MinimumMajor); throws NodeMissingException.
+        string nodeExe = NodeLocator.Find(line => Log(line)).Path;
 
         for (int attempt = 1; ; attempt++)
         {
@@ -118,7 +119,7 @@ internal sealed class NodeServer : IDisposable
         psi.Environment["SOCHA_HOST"] = Host;
         psi.Environment["SOCHA_NO_OPEN"] = "1";
         psi.Environment["SOCHA_DATA_DIR"] = AppPaths.DataDir;
-        // Don't let a developer's shell settings leak into the bundled runtime.
+        // Don't let a developer's shell settings leak into the app's server.
         psi.Environment.Remove("SOCHA_OPEN_BROWSER");
         psi.Environment.Remove("NODE_OPTIONS");
 
@@ -134,7 +135,7 @@ internal sealed class NodeServer : IDisposable
         catch (Exception ex)
         {
             process.Dispose();
-            throw new NodeStartException($"Could not start the bundled Node runtime:\n{nodeExe}\n\n{ex.Message}", ex);
+            throw new NodeStartException($"Could not start Node.js:\n{nodeExe}\n\n{ex.Message}", ex);
         }
         _process = process;
         try

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  ClickOnce bootstrapper (setup.exe) prerequisite: Microsoft Edge WebView2 Runtime (Evergreen).
+
+  Visual Studio does not ship a WebView2 bootstrapper package, so this one lives in the repo.
+  desktop/scripts/publish-site.ps1 -InstallBootstrapperPackages copies this folder into
+  <VS>\MSBuild\Microsoft\VisualStudio\BootstrapperPackages\ (needs admin; the CI runner has it).
+
+  Nothing is bundled: setup.exe downloads Microsoft's ~2 MB Evergreen Bootstrapper from the
+  official fwlink (HomeSite) only when the runtime is missing, and that bootstrapper then
+  installs the runtime from Microsoft. PublicKey="0" = accept the file when it carries a
+  trusted Microsoft signature (no pinned leaf key that breaks when Microsoft rotates certs).
+  Based on Microsoft's WV2DeploymentVSInstallerSample.
+-->
+<Product xmlns="http://schemas.microsoft.com/developer/2004/01/bootstrapper"
+         ProductCode="Socha3.WebView2Runtime.Evergreen">
+
+  <PackageFiles CopyAllPackageFiles="false">
+    <PackageFile Name="MicrosoftEdgeWebview2Setup.exe" HomeSite="WebView2BootstrapperUrl" PublicKey="0" />
+  </PackageFiles>
+
+  <!-- Per-machine install (setup.exe is 32-bit, so HKLM\SOFTWARE maps to WOW6432Node) and per-user install. -->
+  <InstallChecks>
+    <RegistryCheck Property="WebView2MachineVersion" Key="HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Value="pv" />
+    <RegistryCheck Property="WebView2UserVersion" Key="HKCU\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Value="pv" />
+  </InstallChecks>
+
+  <Commands Reboot="Defer">
+    <Command PackageFile="MicrosoftEdgeWebview2Setup.exe"
+             Arguments=" /install"
+             EstimatedInstalledBytes="600000000"
+             EstimatedTempBytes="200000000"
+             EstimatedInstallSeconds="120">
+      <InstallConditions>
+        <BypassIf Property="WebView2MachineVersion" Compare="VersionGreaterThanOrEqualTo" Value="86.0.622.12" />
+        <BypassIf Property="WebView2UserVersion" Compare="VersionGreaterThanOrEqualTo" Value="86.0.622.12" />
+      </InstallConditions>
+      <ExitCodes>
+        <ExitCode Value="0" Result="Success" />
+        <DefaultExitCode Result="Fail" FormatMessageFromSystem="true" String="GeneralFailure" />
+      </ExitCodes>
+    </Command>
+  </Commands>
+</Product>

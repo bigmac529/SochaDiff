@@ -8,6 +8,7 @@ namespace SochaDiff.Desktop;
 public partial class MainWindow : Window
 {
     private const string WebView2DownloadUrl = "https://developer.microsoft.com/microsoft-edge/webview2/";
+    private const string PrerequisitesUrl = "https://sochadiff.socha3.com/#prerequisites";
 
     // Browser-chrome items that make no sense in an app window. Editing items
     // (Cut/Copy/Paste/Select all/Undo/Redo/Emoji, spelling) stay. The diff area
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     private bool _serverStartedOnce;
     private bool _webViewInitialized;
     private bool _closing;
+    private string _downloadUrl = WebView2DownloadUrl;
 
     public MainWindow()
     {
@@ -32,7 +34,7 @@ public partial class MainWindow : Window
         {
             if (_closing) return;
             ShowError("The Socha Diff server stopped",
-                $"The bundled Node server exited unexpectedly (exit code {code}). Retry starts a new one.",
+                $"The local Node.js server exited unexpectedly (exit code {code}). Retry starts a new one.",
                 canRetry: true);
         });
     }
@@ -57,6 +59,11 @@ public partial class MainWindow : Window
             Task serverTask = Task.Run(() => restart ? _server.RestartAsync() : _server.StartAsync());
             Task webViewTask = InitWebViewAsync();
             await Task.WhenAll(serverTask, webViewTask);
+        }
+        catch (NodeMissingException ex)
+        {
+            ShowNodeMissing(ex);
+            return;
         }
         catch (NodeStartException ex)
         {
@@ -232,7 +239,17 @@ public partial class MainWindow : Window
         OpenLogFolderButton.Visibility = showLog ? Visibility.Visible : Visibility.Collapsed;
         RetryButton.Visibility = canRetry ? Visibility.Visible : Visibility.Collapsed;
         DownloadRuntimeButton.Visibility = Visibility.Collapsed;
+        PrerequisitesButton.Visibility = Visibility.Collapsed;
         ErrorPanel.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Shows the download button (with a label and target) and the Prerequisites link.</summary>
+    private void ShowDownload(string label, string url)
+    {
+        _downloadUrl = url;
+        DownloadRuntimeButton.Content = label;
+        DownloadRuntimeButton.Visibility = Visibility.Visible;
+        PrerequisitesButton.Visibility = Visibility.Visible;
     }
 
     private void ShowRuntimeMissing()
@@ -241,7 +258,14 @@ public partial class MainWindow : Window
             "Socha Diff displays its interface with the Microsoft Edge WebView2 Runtime, which was not found on this PC. " +
             "It is built into Windows 11; on other systems install the free Evergreen Runtime from Microsoft, then click Retry.",
             canRetry: true, showLog: false);
-        DownloadRuntimeButton.Visibility = Visibility.Visible;
+        ShowDownload("Get WebView2 Runtime", WebView2DownloadUrl);
+    }
+
+    private void ShowNodeMissing(NodeMissingException ex)
+    {
+        _server.Log("host: " + ex.Message.ReplaceLineEndings(" "));
+        ShowError($"Node.js {NodeLocator.MinimumMajor} or newer is required", ex.Message, canRetry: true);
+        ShowDownload("Get Node.js", NodeLocator.DownloadUrl);
     }
 
     private async void Retry_Click(object sender, RoutedEventArgs e) => await StartAsync();
@@ -251,7 +275,9 @@ public partial class MainWindow : Window
     private void OpenLogFolder_Click(object sender, RoutedEventArgs e) =>
         ShellOpen(Path.GetDirectoryName(_server.LogPath) ?? AppPaths.DataDir);
 
-    private void DownloadRuntime_Click(object sender, RoutedEventArgs e) => ShellOpen(WebView2DownloadUrl);
+    private void DownloadRuntime_Click(object sender, RoutedEventArgs e) => ShellOpen(_downloadUrl);
+
+    private void Prerequisites_Click(object sender, RoutedEventArgs e) => ShellOpen(PrerequisitesUrl);
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 

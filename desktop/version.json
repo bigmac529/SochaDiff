@@ -1,0 +1,5 @@
+{
+  "comment": "Major/minor of the desktop app. Releases are <major>.<minor>.<build>.0, where build is the GitHub Actions run number (see .github/workflows/publish-desktop.yml). Bump minor/major here; never lower them.",
+  "major": 1,
+  "minor": 0
+}
