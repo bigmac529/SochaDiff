@@ -704,15 +704,24 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
   MSBuild; optional `-CertificateThumbprint` or `-PfxPath/-PfxPassword`) -> `desktop/out/site/`
   (git-ignored). The version goes into ApplicationVersion, MinimumRequiredVersion and the assembly
   versions; `SignManifests` also Authenticode-signs SochaDiff.exe/setup.exe before hashing.
-  `deploy-site.ps1` uploads in two phases (everything, then `SochaDiff.application`; never
-  deletes; refuses non-newer versions). `.github/workflows/publish-desktop.yml`: push to main or
-  manual run -> windows-latest, Node 24, .NET 10, npm ci + `test:selection` + `test:paths`,
-  version `<major>.<minor>.<run_number>.0`, publish, artifact `sochadiff-site-<version>`;
-  `deploy` job only on main when secrets `DEPLOY_HOST`, `DEPLOY_SITE`, `DEPLOY_USER`,
-  `DEPLOY_PASSWORD` all exist (Web Deploy, `vars.DEPLOY_ALLOW_UNTRUSTED` / input
-  `allow_untrusted`); optional signing with `SIGNING_PFX_BASE64` + `SIGNING_PFX_PASSWORD`.
-  Concurrency group `publish-desktop`, never cancelled. A self-hosted runner alternative
-  (`[self-hosted, windows, sochadiff]`, robocopy to `C:\WebApps\SochaDiff`) is commented in the
-  workflow. actionlint clean. Details, secrets and IIS prep: `desktop/README.md`.
-- Still open: signing certificate and IIS site/DNS/deploy access (Sissy Admin); first real
-  install test of a CI-published build on Windows.
+  `.github/workflows/publish-desktop.yml`: push to main or manual run -> windows-latest, Node 24,
+  .NET 10, npm ci + `test:selection` + `test:paths`, version `<major>.<minor>.<run_number>.0`,
+  publish, artifact `sochadiff-site-<version>`. Concurrency group `publish-desktop`, never
+  cancelled. actionlint 1.7.12 clean. Details: `desktop/README.md`.
+- **Signing** (secrets `SIGNING_PFX_BASE64` + `SIGNING_PFX_PASSWORD` set): self-signed `CN=Socha3`,
+  thumbprint `CF4137053F371F439BD420B02A51192C5DED6075` (expected via `vars.SIGNING_CERT_THUMBPRINT`
+  or that default; mismatch = warning). The PFX's own thumbprint always wins; secrets present but
+  unsigned output = build fails. ClickOnce updates need the same cert every time: a purchased
+  trusted cert later means existing users reinstall unless a migration is planned.
+- **Deploy** (replaced Web Deploy; no `DEPLOY_*` secrets): job `deploy` on the self-hosted runner
+  `socha3-sochadiff` (`[self-hosted, Windows, X64, sochadiff]`, non-admin `.\gha-sochadiff`) on
+  the IIS server (site `SochaDiff`, `C:\WebApps\SochaDiff`, Cloudflare in front); only push to
+  main or dispatch from main. `deploy-site.ps1` (PS 5.1 + 7, local/UNC target): artifact checks,
+  version guard vs target/live `version.json` (`force`), backup to
+  `C:\WebApps\_deploy-backups\<timestamp>-<live version>` (keep 5), robocopy without deletes
+  (folders + root files, then `SochaDiff.application`, `version.json`, `index.html` swapped in
+  last; exit 0-7 ok), verify `version.json` + `SochaDiff.application` (200,
+  `application/x-ms-application`) with a cache-busting query (stale Cloudflare cache = warning),
+  job summary.
+- Still open: the workflow only runs once merged to main (first real deploy + install/update test
+  of a CI-published build on Windows); pruning old `Application Files` folders is manual.
