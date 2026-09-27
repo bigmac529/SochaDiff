@@ -2657,6 +2657,60 @@ function restoreSession() {
   return true;
 }
 
+// ---------- folder path validation ----------
+// Mirrors server.js normalizeFolderPath: trim whitespace and one matching pair
+// of surrounding quotes, as pasted by Windows "Copy as path".
+function normalizeFolderInput(value) {
+  let folder = String(value || "").trim();
+  if (folder.length >= 2 && (folder[0] === '"' || folder[0] === "'") && folder[folder.length - 1] === folder[0]) {
+    folder = folder.slice(1, -1).trim();
+  }
+  return folder;
+}
+
+function setPathState(input, state, message) {
+  const status = document.getElementById(`${input.id}-status`);
+  input.classList.toggle("path-invalid", state === "invalid");
+  input.classList.toggle("path-valid", state === "valid");
+  if (state === "invalid") input.setAttribute("aria-invalid", "true");
+  else input.removeAttribute("aria-invalid");
+  if (status) status.textContent = state === "invalid" ? message : "";
+}
+
+// Advisory only: never blocks Compare. A per-input token drops responses that
+// arrive after the value changed or a newer check started.
+function setupPathValidation(input) {
+  let token = 0;
+  input.addEventListener("input", () => {
+    token++;
+    setPathState(input, "none");
+  });
+  input.addEventListener("blur", async () => {
+    const folder = normalizeFolderInput(input.value);
+    const myToken = ++token;
+    if (!folder) {
+      setPathState(input, "none");
+      return;
+    }
+    let data;
+    try {
+      const res = await fetch(`/api/dir-exists?path=${encodeURIComponent(folder)}`);
+      if (!res.ok) return;
+      data = await res.json();
+    } catch {
+      return;
+    }
+    if (myToken !== token || normalizeFolderInput(input.value) !== folder) return;
+    if (data.error) setPathState(input, "invalid", data.error === "EACCES" ? "Access denied" : "Folder not accessible");
+    else if (!data.exists) setPathState(input, "invalid", "Folder not found");
+    else if (!data.isDirectory) setPathState(input, "invalid", "Not a folder");
+    else setPathState(input, "valid");
+  });
+}
+
+setupPathValidation(document.getElementById("folderA"));
+setupPathValidation(document.getElementById("folderB"));
+
 // ---------- events ----------
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

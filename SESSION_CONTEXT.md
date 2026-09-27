@@ -275,6 +275,12 @@ slice, then expanded after each behavior was manually checked:
   `{ changes, result }` where `result` is a fresh comparison.
 - Settings load on startup via `loadSettings()`; helpers `applyDefaultSettings()`,
   `currentSettings()`, `saveSettings(settings)`.
+- `GET  /api/dir-exists?path=...` → `{ exists, isDirectory }` via `fs.promises.stat`
+  (resolved on the server's OS). ENOENT/ENOTDIR/EINVAL/ENAMETOOLONG → `exists:false`;
+  EACCES/EPERM add `error:"EACCES"`, other failures add `error:<code>`. Empty path → 400.
+- `normalizeFolderPath()` (trim + one matching pair of surrounding `"`/`'`) is applied to
+  folder inputs in compare, sync, sync/check, open-folder and dir-exists, so pasted
+  `"C:\path"` works everywhere.
 
 ## 11.3 Configurable exclusions & whitespace mode (`lib/compare.js`)
 
@@ -342,6 +348,14 @@ slice, then expanded after each behavior was manually checked:
 - **No Save button** — settings **auto-save**: checkbox on `change` (immediate), textarea
   on `input` (600 ms debounce) and on `change` (immediate). `populateSettings` fills fields
   on open; auto-save does NOT rewrite the textarea mid-edit. Closes via ×, backdrop click, or Esc.
+
+**Folder path validation (blur)**
+- `setupPathValidation` on `#folderA`/`#folderB`: on blur a non-empty (normalized) value
+  calls `/api/dir-exists`; missing → `.path-invalid` + "Folder not found", file → "Not a
+  folder", EACCES → "Access denied"; a directory gets a subtle `.path-valid` border.
+  Messages render in `#folderX-status` on the label row (no layout shift). Typing clears
+  the state; a per-input token drops stale responses. Advisory only: never blocks Compare.
+- Test: `npm run test:paths` (`tests/path-validation.js`, own server on an ephemeral port).
 
 **Count chips / filtering**
 - Summary chips are buttons (`chip(className, category, n, label)`), `activeCategory`

@@ -20,6 +20,16 @@ const app = express();
 const STATE_FILE = path.join(__dirname, ".socha-diff-state.json");
 const SETTINGS_FILE = path.join(__dirname, ".socha-diff-settings.json");
 
+// Normalize a user-entered folder path: trim whitespace and one matching pair
+// of surrounding quotes (Windows "Copy as path" pastes "C:\path").
+function normalizeFolderPath(value) {
+  let folder = typeof value === "string" ? value.trim() : "";
+  if (folder.length >= 2 && (folder[0] === '"' || folder[0] === "'") && folder[folder.length - 1] === folder[0]) {
+    folder = folder.slice(1, -1).trim();
+  }
+  return folder;
+}
+
 // Resolve relPath against folder, rejecting traversal outside it, and confirm
 // the result is an accessible file. Shared by the open-file endpoints below.
 function resolveFileTarget(folder, relPath) {
@@ -101,8 +111,27 @@ app.get("/api/settings", (_req, res) => {
   res.json(currentSettings());
 });
 
+// Lightweight existence check used by the folder inputs on blur. Resolved on
+// the server's OS, so Windows paths work when the server runs on Windows.
+// Always 200 with { exists, isDirectory }; permission problems add `error`.
+app.get("/api/dir-exists", async (req, res) => {
+  const folder = normalizeFolderPath(req.query.path);
+  if (!folder) return res.status(400).json({ error: "Please provide a folder path." });
+  try {
+    const st = await fs.promises.stat(path.resolve(folder));
+    res.json({ exists: true, isDirectory: st.isDirectory() });
+  } catch (e) {
+    const missing = ["ENOENT", "ENOTDIR", "EINVAL", "ENAMETOOLONG"].includes(e.code);
+    const result = { exists: false, isDirectory: false };
+    if (!missing) {
+      result.error = e.code === "EACCES" || e.code === "EPERM" ? "EACCES" : e.code || "UNKNOWN";
+    }
+    res.json(result);
+  }
+});
+
 app.get("/api/open-folder", (req, res) => {
-  const folder = typeof req.query.path === "string" ? req.query.path.trim() : "";
+  const folder = normalizeFolderPath(req.query.path);
   if (!folder) return res.status(400).json({ error: "Please provide a folder path." });
   if (process.platform !== "win32") {
     return res.status(400).json({ error: "Opening folders in Windows Explorer is only supported on Windows." });
@@ -192,8 +221,8 @@ app.post("/api/settings/reset", (_req, res) => {
 
 app.post("/api/compare", (req, res) => {
   const body = req.body || {};
-  const folderA = typeof body.folderA === "string" ? body.folderA.trim() : "";
-  const folderB = typeof body.folderB === "string" ? body.folderB.trim() : "";
+  const folderA = normalizeFolderPath(body.folderA);
+  const folderB = normalizeFolderPath(body.folderB);
 
   if (!folderA || !folderB) {
     return res.status(400).json({ error: "Please provide both folder paths." });
@@ -210,8 +239,8 @@ app.post("/api/compare", (req, res) => {
 
 app.post("/api/sync", (req, res) => {
   const body = req.body || {};
-  const folderA = typeof body.folderA === "string" ? body.folderA.trim() : "";
-  const folderB = typeof body.folderB === "string" ? body.folderB.trim() : "";
+  const folderA = normalizeFolderPath(body.folderA);
+  const folderB = normalizeFolderPath(body.folderB);
   const direction = body.direction === "A" || body.direction === "B" ? body.direction : "";
   const expectedHashes = body.contentHashes;
 
@@ -237,8 +266,8 @@ app.post("/api/sync", (req, res) => {
 
 app.post("/api/sync/check", (req, res) => {
   const body = req.body || {};
-  const folderA = typeof body.folderA === "string" ? body.folderA.trim() : "";
-  const folderB = typeof body.folderB === "string" ? body.folderB.trim() : "";
+  const folderA = normalizeFolderPath(body.folderA);
+  const folderB = normalizeFolderPath(body.folderB);
   const expectedHashes = body.contentHashes;
 
   if (!folderA || !folderB || !expectedHashes || typeof expectedHashes.A !== "string" || typeof expectedHashes.B !== "string") {

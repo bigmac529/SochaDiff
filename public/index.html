@@ -33,12 +33,18 @@
     <main>
       <form id="compare-form" class="panel">
         <div class="field">
-          <label for="folderA">Folder A</label>
-          <input type="text" id="folderA" name="folderA" placeholder="C:\path\to\folder-a" autocomplete="off" spellcheck="false" required />
+          <div class="field-label-row">
+            <label for="folderA">Folder A</label>
+            <span id="folderA-status" class="path-status" aria-live="polite"></span>
+          </div>
+          <input type="text" id="folderA" name="folderA" class="path-input" placeholder="C:\path\to\folder-a" autocomplete="off" spellcheck="false" required aria-describedby="folderA-status" />
         </div>
         <div class="field">
-          <label for="folderB">Folder B</label>
-          <input type="text" id="folderB" name="folderB" placeholder="C:\path\to\folder-b" autocomplete="off" spellcheck="false" required />
+          <div class="field-label-row">
+            <label for="folderB">Folder B</label>
+            <span id="folderB-status" class="path-status" aria-live="polite"></span>
+          </div>
+          <input type="text" id="folderB" name="folderB" class="path-input" placeholder="C:\path\to\folder-b" autocomplete="off" spellcheck="false" required aria-describedby="folderB-status" />
         </div>
         <div class="actions">
           <span class="compare-button-wrap">
