@@ -7,6 +7,7 @@ npm-debug.log*
 # Desktop host (desktop/): staged Node + app bundle, download cache, build output
 desktop/bundle/
 desktop/.cache/
+desktop/out/
 desktop/**/bin/
 desktop/**/obj/
 *.user

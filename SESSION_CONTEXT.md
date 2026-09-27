@@ -623,6 +623,10 @@ explicitly changes them.
 
 Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
 
+> **Update 2026-09-27 (see §14.1): .NET 10, framework-dependent, Node.js is a prerequisite,
+> download site in `site/`, CI publishing.** The bullets below describe the first version; where
+> they conflict, §14.1 wins.
+
 - `desktop/SochaDiff.Desktop/`: a .NET 8 WPF app (`net8.0-windows`, win-x64,
   `Microsoft.Web.WebView2`) with `desktop/SochaDiff.sln`. It is a full-window WebView2
   over the unchanged web app. The web app stays vanilla; its only hooks are
@@ -656,3 +660,51 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
   compare in WebView2, app Copy menu → clipboard, close and `Stop-Process -Force` both
   kill node, crash → Retry, error panels, and a local ClickOnce publish (manifest lists
   node/app files). Not yet done: publishing to the site, signing.
+
+## 14.1 .NET 10, framework-dependent, prerequisites, site, CI (2026-09-27, authoritative)
+
+- **.NET 10**: `net10.0-windows`, win-x64, `SelfContained=false` in the csproj and both
+  publish profiles. WebView2 SDK stays 1.0.4191.47 (latest stable). Package XML docs are not
+  published. Builds clean on the box with SDK 10.0.401 (`EnableWindowsTargeting`).
+- **Prerequisites** (installed once by the user, listed on the site): .NET 10 Desktop
+  Runtime x64, WebView2 Runtime, Node.js 20+. Node is no longer bundled.
+  - `NodeLocator.cs`: `SOCHA_NODE` (alias `SOCHA_DESKTOP_NODE`) -> bundled `node\node.exe`
+    (portable builds only) -> PATH (process + registry machine/user PATH, so Retry finds a
+    fresh install) -> `%ProgramFiles%\nodejs`, `%ProgramFiles(x86)%\nodejs` -> nvm-windows, fnm,
+    Volta, Scoop, Chocolatey. Probes `node -p "process.version+'|'+process.execPath"`, needs
+    major >= 20 (`MinimumMajor`), launches the real execPath (shims would break the pid check).
+  - Missing/old Node -> `NodeMissingException` -> panel "Node.js 20 or newer is required" with
+    what was found, **Get Node.js** (nodejs.org/en/download), **All prerequisites**
+    (sochadiff.socha3.com/#prerequisites), Retry. WebView2 panel also got All prerequisites.
+  - .NET runtime: the framework-dependent apphost shows Windows' ".NET is required" dialog
+    before app code runs; the host logs the runtime version.
+- **Bundle**: `prepare-bundle.ps1/.sh` stage `bundle/app` only (npm ci with Node 20+ on PATH);
+  `-IncludeNode` / `--include-node` adds the pinned `node.exe` for a portable build.
+  `node-pin.json` has `minimumMajor` and is otherwise only for `-IncludeNode`. `package.json`
+  has `engines.node >=20`.
+- **Version**: `desktop/version.json` (major/minor, now 1.0) + `SochaBuildNumber` (CI run
+  number) -> `ApplicationVersion` `<major>.<minor>.<build>.0`, assembly/file version, `Version`
+  `<major>.<minor>.<build>`. ClickOnce: `UpdateMode=Foreground`, `UpdateRequired=true`,
+  `MinimumRequiredVersion` = published version (every launch installs a newer release first).
+- **setup.exe prerequisites** (HomeSite, not bundled): `Microsoft.NetCore.DesktopRuntime.10.0.x64`
+  (VS 2026 package) and the repo's `desktop/bootstrapper/Socha3.WebView2Runtime` (VS has no
+  WebView2 package; `publish-site.ps1 -InstallBootstrapperPackages` copies it into VS). Missing
+  packages are dropped with a warning (`SochaPrereqDotNet` / `SochaPrereqWebView2=false`).
+- **Size**: framework-dependent Folder publish 5,975,071 bytes (node_modules 3,062,028) vs
+  251,753,026 bytes for the old self-contained publish with node.exe.
+- **Site** `site/`: vanilla static download page (dark animated hero, real demo recording
+  `assets/demo.webm|mp4|gif` + poster in a faux "Socha Diff" window, features, Install =
+  `SochaDiff.application`, `setup.exe`, separate Prerequisites section, requirements, removable
+  `UNSIGNED-NOTICE` block, OG/favicon, `web.config` with ClickOnce MIME types and no-cache on the
+  manifest). `<!--app-version-->` / `<!--app-size-->` markers and `version.json` are stamped by
+  publish-site.ps1. Demo fixtures `sample/demo-a|demo-b`; recorder `desktop/scripts/record-demo.js`
+  (Xvfb + xdotool + ffmpeg x11grab, real input and cursor).
+- **Publishing**: `desktop/scripts/publish-site.ps1 -Build N` (Windows, VS MSBuild) ->
+  `desktop/out/site/` (git-ignored); `deploy-site.ps1` uploads it in two phases (manifest last,
+  never deletes, refuses non-newer versions). `.github/workflows/publish-desktop.yml`: push to
+  main / manual -> tests, publish, artifact, deploy via Web Deploy (secrets `DEPLOY_HOST`,
+  `DEPLOY_SITE`, `DEPLOY_USER`, `DEPLOY_PASSWORD`) or a self-hosted runner (`DEPLOY_MODE=self-hosted`,
+  copies to `C:\WebApps\SochaDiff`); optional signing (`SIGNING_PFX_BASE64`,
+  `SIGNING_PFX_PASSWORD`). PRs to main build only. Details: `desktop/README.md`.
+- Still open: signing certificate and IIS site/DNS/deploy access (Sissy Admin); first real
+  install test of a CI-published build on Windows.
