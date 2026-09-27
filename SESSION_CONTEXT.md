@@ -278,6 +278,11 @@ slice, then expanded after each behavior was manually checked:
 - `GET  /api/dir-exists?path=...` → `{ exists, isDirectory }` via `fs.promises.stat`
   (resolved on the server's OS). ENOENT/ENOTDIR/EINVAL/ENAMETOOLONG → `exists:false`;
   EACCES/EPERM add `error:"EACCES"`, other failures add `error:<code>`. Empty path → 400.
+- Browser auto-open: `npm start` runs `node server.js --open`; the `listen` callback opens
+  `http://localhost:<actual port>` via the platform opener (`cmd /c start "" url`, `open`,
+  `xdg-open`), spawned detached with errors ignored. Opt-in only (`--open` or
+  `SOCHA_OPEN_BROWSER=1`); `--no-open` / `SOCHA_NO_OPEN=1` always win. Plain `node server.js`,
+  embedded hosts and the test suites (which set `SOCHA_NO_OPEN=1`) never open a browser.
 - `normalizeFolderPath()` (trim + one matching pair of surrounding `"`/`'`) is applied to
   folder inputs in compare, sync, sync/check, open-folder and dir-exists, so pasted
   `"C:\path"` works everywhere.

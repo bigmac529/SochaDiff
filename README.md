@@ -45,7 +45,9 @@ npm install
 npm start
 ```
 
-Then open <http://127.0.0.1:3000> in your browser.
+`npm start` opens <http://localhost:3000> in your default browser once the
+server is listening. Use `npm start -- --no-open` or set `SOCHA_NO_OPEN=1` to
+skip that; plain `node server.js` never opens a browser.
 
 The server binds to `127.0.0.1` only. It reads arbitrary local paths you type
 in, so it is intentionally not exposed to the network. Set the `PORT`

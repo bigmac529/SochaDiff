@@ -2,7 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const express = require("express");
 const {
   compareFolders,
@@ -288,8 +288,48 @@ app.post("/api/sync/check", (req, res) => {
 const PORT = process.env.PORT || 3000;
 const HOST = "localhost";
 
-app.listen(PORT, HOST, () => {
+function envFlag(name) {
+  const value = String(process.env[name] || "").trim().toLowerCase();
+  return value !== "" && value !== "0" && value !== "false" && value !== "no";
+}
+
+// Opt-in only (`npm start` passes --open) so `node server.js`, the test suites
+// and embedded hosts never pop a browser. --no-open / SOCHA_NO_OPEN always win.
+function shouldOpenBrowser() {
+  const args = process.argv.slice(2);
+  if (args.includes("--no-open") || envFlag("SOCHA_NO_OPEN")) return false;
+  return args.includes("--open") || envFlag("SOCHA_OPEN_BROWSER");
+}
+
+// Best effort: launch the platform opener detached and ignore any failure.
+function openBrowser(url) {
+  let command;
+  let args;
+  if (process.platform === "win32") {
+    // The empty "" is start's window-title placeholder.
+    command = "cmd.exe";
+    args = ["/c", "start", "", url];
+  } else if (process.platform === "darwin") {
+    command = "open";
+    args = [url];
+  } else {
+    command = "xdg-open";
+    args = [url];
+  }
+  console.log(`Opening browser: ${command} ${url}`);
+  try {
+    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // No opener available; the URL is already printed above.
+  }
+}
+
+const server = app.listen(PORT, HOST, () => {
   // Bound to localhost only: the app reads arbitrary local paths, so it must
   // not be exposed to the network.
-  console.log(`Socha Diff app running at http://${HOST}:${PORT}`);
+  const url = `http://${HOST}:${server.address().port}`;
+  console.log(`Socha Diff app running at ${url}`);
+  if (shouldOpenBrowser()) openBrowser(url);
 });

@@ -102,7 +102,7 @@ async function main() {
   const port = await getEphemeralPort();
   const server = spawn(process.execPath, [path.join(ROOT, "server.js")], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port) },
+    env: { ...process.env, PORT: String(port), SOCHA_NO_OPEN: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 

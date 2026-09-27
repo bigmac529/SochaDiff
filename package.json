@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "prestart": "node scripts/free-port.js",
-    "start": "node server.js",
+    "start": "node server.js --open",
     "test:selection": "node tests/selection-chaotic-drag.js",
     "test:paths": "node tests/path-validation.js"
   },
