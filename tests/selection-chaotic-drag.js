@@ -503,9 +503,12 @@ async function main() {
   const port = await getEphemeralPort();
   const baseUrl = `http://localhost:${port}`;
 
+  // Fresh settings/state dir: default settings, and the checkout's own
+  // .socha-diff-*.json files are never read or rewritten by the run.
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "socha-diff-test-"));
   const server = spawn(process.execPath, [path.join(ROOT, "server.js")], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), SOCHA_NO_OPEN: "1" },
+    env: { ...process.env, PORT: String(port), SOCHA_NO_OPEN: "1", SOCHA_DATA_DIR: dataDir },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -520,6 +523,7 @@ async function main() {
     } catch {
       /* ignore */
     }
+    fs.rmSync(dataDir, { recursive: true, force: true });
   };
 
   try {

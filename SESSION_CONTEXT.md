@@ -322,6 +322,20 @@ slice, then expanded after each behavior was manually checked:
   (indexed by `leftNum-1` / `rightNum-1`) before `collapseContext`.
 - Rendered only when **Show whitespace** is on: LF → `↓` (U+2193), CRLF → `↵` (U+21B5),
   no trailing newline → no marker.
+- **Differing endings are changes (whitespace-aware mode only).** `compareFile` promotes any
+  equal-content row whose `leftEnding !== rightEnding` to `replace` whenever whitespace is
+  NOT ignored, even when the file has other content changes (previously only when the
+  whole file differed solely in endings, so mixed files folded EOL-only lines into gaps).
+- Client: `eolDiffers(row)` (replace row, endings differ, `!currentIgnoreWhitespace`) adds
+  `.eol-changed` to that row's ending marker on both views: the `↵`/`↓` glyph with
+  whitespace chars on, otherwise a blank 1ch `.eol-blank` cell. It uses the changed-word
+  emphasis (A red `rgba(255,120,120,.4)`, B green `rgba(112,224,145,.55)`; unified targets
+  `tr.delete` / `tr.insert`). A side with no ending (missing final newline) gets no cell.
+  Fixtures: `sample/eol-a|eol-b` (`crlf-vs-lf.txt`, `mixed.txt`), kept byte-exact by
+  `.gitattributes` (`-text`).
+- Tests: `tests/newline-selection.js` (run by `npm run test:selection` after the chaotic
+  suite). All suites start `server.js` with a temp `SOCHA_DATA_DIR` so they use default
+  settings and never rewrite the checkout's `.socha-diff-*.json`.
 
 ## 11.6 Result object — additions vs §7
 

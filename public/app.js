@@ -245,7 +245,13 @@ function lineTextFromContent(textContent) {
   return textContent.textContent;
 }
 
-function textTd(className, text, ending, segments) {
+// True when a replace pair's line endings differ and should get the
+// changed-character emphasis. Ignore-whitespace treats CRLF/LF as common.
+function eolDiffers(row) {
+  return !currentIgnoreWhitespace && row.type === "replace" && (row.leftEnding || "") !== (row.rightEnding || "");
+}
+
+function textTd(className, text, ending, segments, eolChanged) {
   const cell = td(className);
   const content = el("div", "text-content");
   const raw = text === null || text === undefined ? "" : text;
@@ -256,9 +262,13 @@ function textTd(className, text, ending, segments) {
       else span.textContent = segment.text;
       content.appendChild(span);
     }
-    if (showWhitespace && (ending === "crlf" || ending === "lf")) {
-      const eol = el("span", "ws-eol");
-      eol.dataset.eol = ending === "crlf" ? "\u21B5" : "\u2193";
+    const hasEnding = ending === "crlf" || ending === "lf";
+    if (hasEnding && (showWhitespace || eolChanged)) {
+      // With whitespace chars off, a differing ending still gets a blank
+      // one-character cell so the change stays visible.
+      const eol = el("span", showWhitespace ? "ws-eol" : "eol-blank");
+      if (showWhitespace) eol.dataset.eol = ending === "crlf" ? "\u21B5" : "\u2193";
+      if (eolChanged) eol.classList.add("eol-changed");
       content.appendChild(eol);
     }
   } else if (showWhitespace) {
@@ -1973,7 +1983,7 @@ function sideBySideContentRow(side, row) {
     if (hasText) tr.dataset.ending = row.leftEnding || "";
     tr.appendChild(td("num", hasText ? row.leftNum : ""));
     tr.appendChild(td(hasText ? "sign left" : "sign", hasText && (row.type === "delete" || row.type === "replace") ? "-" : ""));
-    tr.appendChild(textTd(hasText ? "text left" : "text empty left", hasText ? row.leftText : "", hasText ? row.leftEnding : "", segments));
+    tr.appendChild(textTd(hasText ? "text left" : "text empty left", hasText ? row.leftText : "", hasText ? row.leftEnding : "", segments, eolDiffers(row)));
   } else {
     const hasText = row.rightNum !== null;
     const segments = row.type === "replace" ? characterSegments(row.leftText, row.rightText).right : null;
@@ -1981,7 +1991,7 @@ function sideBySideContentRow(side, row) {
     if (hasText) tr.dataset.ending = row.rightEnding || "";
     tr.appendChild(td("num", hasText ? row.rightNum : ""));
     tr.appendChild(td(hasText ? "sign right" : "sign", hasText && (row.type === "insert" || row.type === "replace") ? "+" : ""));
-    tr.appendChild(textTd(hasText ? "text right" : "text empty right", hasText ? row.rightText : "", hasText ? row.rightEnding : "", segments));
+    tr.appendChild(textTd(hasText ? "text right" : "text empty right", hasText ? row.rightText : "", hasText ? row.rightEnding : "", segments, eolDiffers(row)));
   }
   return tr;
 }
@@ -2017,12 +2027,12 @@ function renderSideBySide(rows, file) {
   return scroll;
 }
 
-function unifiedRow(type, leftNum, rightNum, sign, text, ending, segments) {
+function unifiedRow(type, leftNum, rightNum, sign, text, ending, segments, eolChanged) {
   const tr = el("tr", type);
   tr.appendChild(td("num", leftNum === null ? "" : leftNum));
   tr.appendChild(td("num", rightNum === null ? "" : rightNum));
   tr.appendChild(td("sign", sign));
-  tr.appendChild(textTd("text", text, ending, segments));
+  tr.appendChild(textTd("text", text, ending, segments, eolChanged));
   return tr;
 }
 
@@ -2049,8 +2059,9 @@ function appendUnifiedModelRow(parent, row) {
     parent.appendChild(unifiedRow("insert", null, row.rightNum, "+", row.rightText, row.rightEnding));
   } else if (row.type === "replace") {
     const segments = characterSegments(row.leftText, row.rightText);
-    parent.appendChild(unifiedRow("delete", row.leftNum, null, "-", row.leftText, row.leftEnding, segments.left));
-    parent.appendChild(unifiedRow("insert", null, row.rightNum, "+", row.rightText, row.rightEnding, segments.right));
+    const eolChanged = eolDiffers(row);
+    parent.appendChild(unifiedRow("delete", row.leftNum, null, "-", row.leftText, row.leftEnding, segments.left, eolChanged));
+    parent.appendChild(unifiedRow("insert", null, row.rightNum, "+", row.rightText, row.rightEnding, segments.right, eolChanged));
   }
 }
 

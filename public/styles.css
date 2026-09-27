@@ -1286,6 +1286,37 @@ tr.replace td.text.right .diff-changed {
   color: #effff3;
 }
 
+/* Differing line endings on a replace pair get the same emphasis as changed
+   characters: the EOL glyph when whitespace chars are shown, otherwise a
+   blank one-character cell where the ending sits. Unified renders the pair
+   as delete (A) / insert (B) rows. */
+.text-content .eol-blank {
+  display: inline-block;
+  width: 1ch;
+  min-height: 1.5em;
+  vertical-align: top;
+}
+
+tr.replace td.text.left .eol-changed,
+.unified-diff tr.delete td.text .eol-changed {
+  background: rgba(255, 120, 120, 0.4);
+}
+
+tr.replace td.text.right .eol-changed,
+.unified-diff tr.insert td.text .eol-changed {
+  background: rgba(112, 224, 145, 0.55);
+}
+
+tr.replace td.text.left .ws-eol.eol-changed::after,
+.unified-diff tr.delete td.text .ws-eol.eol-changed::after {
+  color: #fff1f1;
+}
+
+tr.replace td.text.right .ws-eol.eol-changed::after,
+.unified-diff tr.insert td.text .ws-eol.eol-changed::after {
+  color: #effff3;
+}
+
 tr.delete td.sign,
 tr.replace td.sign.left {
   color: var(--del-border);

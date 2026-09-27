@@ -10,7 +10,9 @@
  * Starts `node server.js` on an ephemeral port for the run.
  */
 
+const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -100,9 +102,10 @@ async function main() {
   }
 
   const port = await getEphemeralPort();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "socha-diff-test-"));
   const server = spawn(process.execPath, [path.join(ROOT, "server.js")], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), SOCHA_NO_OPEN: "1" },
+    env: { ...process.env, PORT: String(port), SOCHA_NO_OPEN: "1", SOCHA_DATA_DIR: dataDir },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -185,6 +188,7 @@ async function main() {
   } finally {
     server.kill("SIGTERM");
     await browser.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 
   log(`\npassed: ${PASS.length}`);

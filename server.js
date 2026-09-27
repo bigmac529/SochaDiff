@@ -17,8 +17,11 @@ const {
 } = require("./lib/compare");
 
 const app = express();
-const STATE_FILE = path.join(__dirname, ".socha-diff-state.json");
-const SETTINGS_FILE = path.join(__dirname, ".socha-diff-settings.json");
+// SOCHA_DATA_DIR lets test suites keep their settings/state out of the
+// user's checkout; the app itself always uses the directory beside server.js.
+const DATA_DIR = process.env.SOCHA_DATA_DIR || __dirname;
+const STATE_FILE = path.join(DATA_DIR, ".socha-diff-state.json");
+const SETTINGS_FILE = path.join(DATA_DIR, ".socha-diff-settings.json");
 
 // Normalize a user-entered folder path: trim whitespace and one matching pair
 // of surrounding quotes (Windows "Copy as path" pastes "C:\path").

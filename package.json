@@ -7,7 +7,7 @@
   "scripts": {
     "prestart": "node scripts/free-port.js",
     "start": "node server.js --open",
-    "test:selection": "node tests/selection-chaotic-drag.js",
+    "test:selection": "node tests/selection-chaotic-drag.js && node tests/newline-selection.js",
     "test:paths": "node tests/path-validation.js"
   },
   "dependencies": {
