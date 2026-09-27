@@ -518,6 +518,29 @@ document.addEventListener("mousedown", (event) => {
   const prevAnchor = dragAnchorRowIndex;
   const targetScope = event.target instanceof Element ? event.target.closest(".select-scope") : null;
 
+  // The custom Copy menu acts on the current selection: pressing its item must
+  // not reset gesture state (selectionScope / proximity arms) or strip the
+  // .gap-armed paint, and must not move focus / the native selection.
+  if (diffContextMenu && event.target instanceof Node && diffContextMenu.contains(event.target)) {
+    event.preventDefault();
+    return;
+  }
+
+  // Non-primary buttons (right-click for the Copy menu, middle-click) are not
+  // selection gestures. The reset below used to run before the button check,
+  // so a right-click cleared .gap-armed / spanned-gap paint (and proximity
+  // arms) while the native selection stayed put — no selectionchange followed
+  // to repaint, leaving the highlight out of sync with what Copy includes.
+  // Keep all selection/gap state; only end a stuck drag. The contextmenu
+  // handler decides whether to keep the selection or select the whole pane.
+  if (event.button !== 0) {
+    if (dragSelecting) endDragSelecting();
+    // Stop Chromium from collapsing / moving the native selection (it may
+    // place a caret or select a word under the pointer on right-click).
+    if (event.button === 2 && targetScope) event.preventDefault();
+    return;
+  }
+
   // Plain gap clicks are expand/collapse controls, not selection gestures. Keep
   // the toggle O(gap), but do not return before transferring selection ownership
   // to the clicked pane and resetting gesture state. Skipping that O(1) setup
@@ -754,13 +777,18 @@ document.addEventListener("contextmenu", (event) => {
   }
   if (!scroll || !file) return;
   event.preventDefault();
-  // Keep an existing in-scope selection; otherwise arm whole-pane for Copy.
+  // Keep an existing in-scope selection (with its armed / spanned gaps);
+  // otherwise arm whole-pane for Copy.
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || scopeOf(selection.anchorNode) !== scope) {
+    proximityGapIndices = new Set();
     selectAllInScope(scope);
   } else {
     selectionScope = scope;
   }
+  // Re-sync gap paint with the (unchanged) selection: no selectionchange fires
+  // when the selection is kept, so repaint explicitly.
+  updateSelectionVisuals();
   showDiffContextMenu(event.clientX, event.clientY, scroll, file);
 });
 

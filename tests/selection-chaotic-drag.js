@@ -1392,6 +1392,122 @@ async function main() {
       assert("outside click dismisses custom menu", (await page.locator(".diff-context-menu").count()) === 0);
     });
 
+    // Right-click must not disarm proximity-armed / spanned gaps or collapse
+    // the native selection; the custom Copy menu then copies the full
+    // selection with hidden gap lines spliced in.
+    const readClipboard = () =>
+      page.evaluate(async () => {
+        try {
+          return await navigator.clipboard.readText();
+        } catch {
+          return null;
+        }
+      });
+    const resetClipboard = () =>
+      page.evaluate(async () => {
+        try {
+          await navigator.clipboard.writeText("__socha_clip_reset__");
+        } catch {
+          /* ignore */
+        }
+      });
+    const armTopGap = async () => {
+      await clearNativeSelection(page);
+      const textPt = await edgeOfRow(page, "left", firstText, "end", FILE);
+      const gapPt = await centerOfRow(page, "left", topGap, FILE);
+      await chaoticDrag(page, [textPt, { x: textPt.x - 8, y: textPt.y }, { x: gapPt.x, y: gapPt.y }]);
+      return paneSnapshot(page, "left", FILE);
+    };
+
+    await runScenario("right-click on selected text keeps proximity-armed gap", async () => {
+      if (topGap == null) {
+        assert("top gap present for right-click arm scenario", false, "no top gap");
+        return;
+      }
+      const before = await armTopGap();
+      assert(
+        "pre-right-click gap is armed",
+        before.gapArmed.includes(topGap) && before.selectedInPane,
+        `armed=${before.gapArmed} sel=${JSON.stringify(before.selectedText.slice(0, 60))}`
+      );
+      await resetClipboard();
+      const onSel = await centerOfRow(page, "left", firstText, FILE);
+      await page.mouse.click(onSel.x, onSel.y, { button: "right" });
+      await sleep(60);
+      const after = await paneSnapshot(page, "left", FILE);
+      assert(
+        "right-click on selection keeps .gap-armed",
+        after.gapArmed.includes(topGap),
+        `armed=${after.gapArmed} (before ${before.gapArmed})`
+      );
+      assert(
+        "right-click on selection keeps native selection unchanged",
+        after.selectedInPane && after.selectedText === before.selectedText,
+        `before=${JSON.stringify(before.selectedText.slice(0, 60))} after=${JSON.stringify(after.selectedText.slice(0, 60))}`
+      );
+      assert("right-click on selection opens custom menu", (await page.locator(".diff-context-menu").count()) === 1);
+      await page.locator(".diff-context-menu-item").click();
+      await sleep(60);
+      const copied = (await readClipboard()) || "";
+      assert(
+        "right-click Copy includes hidden gap lines 1 and 6",
+        /line 1\b/.test(copied) && /line 6\b/.test(copied),
+        `copy=${JSON.stringify(copied.slice(0, 120))}`
+      );
+      assert(
+        "right-click Copy includes selected visible line",
+        /line 7\b/.test(copied),
+        `copy=${JSON.stringify(copied.slice(0, 120))}`
+      );
+      assert(
+        "right-click Copy is the selection, not whole pane",
+        !/CHANGED A/.test(copied) && !/line 20/.test(copied),
+        `copy=${JSON.stringify(copied.slice(0, 160))}`
+      );
+      const afterCopy = await paneSnapshot(page, "left", FILE);
+      assert(
+        "gap stays armed after menu Copy",
+        afterCopy.gapArmed.includes(topGap) && afterCopy.selectedText === before.selectedText,
+        `armed=${afterCopy.gapArmed}`
+      );
+    });
+
+    await runScenario("right-click on unselected text in same pane keeps armed selection", async () => {
+      if (topGap == null) return;
+      const before = await armTopGap();
+      assert("pre-right-click (unselected) gap is armed", before.gapArmed.includes(topGap), `armed=${before.gapArmed}`);
+      await resetClipboard();
+      const offSel = await centerOfRow(page, "left", lastText, FILE);
+      await page.mouse.click(offSel.x, offSel.y, { button: "right" });
+      await sleep(60);
+      const after = await paneSnapshot(page, "left", FILE);
+      assert(
+        "right-click on unselected text keeps .gap-armed",
+        after.gapArmed.includes(topGap),
+        `armed=${after.gapArmed}`
+      );
+      assert(
+        "right-click on unselected text keeps native selection unchanged",
+        after.selectedInPane && after.selectedText === before.selectedText,
+        `before=${JSON.stringify(before.selectedText.slice(0, 60))} after=${JSON.stringify(after.selectedText.slice(0, 60))}`
+      );
+      assert("right-click on unselected text opens custom menu", (await page.locator(".diff-context-menu").count()) === 1);
+      await page.locator(".diff-context-menu-item").click();
+      await sleep(60);
+      const copied = (await readClipboard()) || "";
+      assert(
+        "unselected right-click Copy includes hidden gap lines",
+        /line 1\b/.test(copied) && /line 6\b/.test(copied) && /line 7\b/.test(copied),
+        `copy=${JSON.stringify(copied.slice(0, 120))}`
+      );
+      assert(
+        "unselected right-click Copy stays the selection",
+        !/CHANGED A/.test(copied) && !/line 20/.test(copied),
+        `copy=${JSON.stringify(copied.slice(0, 160))}`
+      );
+      await clearNativeSelection(page);
+    });
+
     // Chromium triple-click selects a line but often paints the next row's
     // gutters and parks focus at offset 0 of the next .text-content. Copy must
     // not pull that neighboring line in (selectedRowRange ignores gutter-only hits).
@@ -2266,6 +2382,65 @@ async function main() {
           leftAfterShift.gapArmed.length === 0 && rightAfterShift.selectedInPane,
           JSON.stringify({ leftAfterShift, rightAfterShift })
         );
+      });
+
+      await runScenario("right-click keeps spanned interior gap and Copy includes hidden lines", async () => {
+        if (interiorGap == null) return;
+        const below = spanText.find((t) => t > interiorGap);
+        const above = [...spanText].reverse().find((t) => t < interiorGap);
+        if (below == null || above == null) return;
+        await clearNativeSelection(page);
+        const gAbove = await centerOfGutter(page, "left", above, SPAN_FILE);
+        const gBelow = await centerOfGutter(page, "left", below, SPAN_FILE);
+        await chaoticDrag(page, [gAbove, { x: gAbove.x, y: (gAbove.y + gBelow.y) / 2 }, gBelow]);
+        const before = await paneSnapshot(page, "left", SPAN_FILE);
+        assert(
+          "pre-right-click interior gap is spanned/armed",
+          before.gapArmed.includes(interiorGap) && before.selectedInPane,
+          `armed=${before.gapArmed}`
+        );
+        await page.evaluate(async () => {
+          try {
+            await navigator.clipboard.writeText("__socha_clip_reset__");
+          } catch {
+            /* ignore */
+          }
+        });
+        const onSel = await centerOfRow(page, "left", above, SPAN_FILE);
+        await page.mouse.click(onSel.x, onSel.y, { button: "right" });
+        await sleep(60);
+        const after = await paneSnapshot(page, "left", SPAN_FILE);
+        assert(
+          "right-click keeps spanned interior .gap-armed",
+          after.gapArmed.includes(interiorGap),
+          `armed=${after.gapArmed} (before ${before.gapArmed})`
+        );
+        assert(
+          "right-click keeps spanned native selection unchanged",
+          after.selectedInPane && after.selectedText === before.selectedText,
+          `before=${JSON.stringify(before.selectedText.slice(0, 60))} after=${JSON.stringify(after.selectedText.slice(0, 60))}`
+        );
+        assert("spanned right-click opens custom menu", (await page.locator(".diff-context-menu").count()) === 1);
+        await page.locator(".diff-context-menu-item").click();
+        await sleep(60);
+        const copied = await page.evaluate(async () => {
+          try {
+            return await navigator.clipboard.readText();
+          } catch {
+            return "";
+          }
+        });
+        assert(
+          "spanned right-click Copy includes hidden interior lines 9-11",
+          /line 9\b/.test(copied) && /line 10\b/.test(copied) && /line 11\b/.test(copied),
+          `copy=${JSON.stringify((copied || "").slice(0, 160))}`
+        );
+        assert(
+          "spanned right-click Copy includes both neighbors, not whole pane",
+          /line 8\b/.test(copied) && /line 12\b/.test(copied) && !/line 1\n/.test(copied) && !/line 20/.test(copied),
+          `copy=${JSON.stringify((copied || "").slice(0, 160))}`
+        );
+        await clearNativeSelection(page);
       });
     }
 
