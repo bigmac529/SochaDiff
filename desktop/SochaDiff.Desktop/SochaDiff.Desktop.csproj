@@ -15,7 +15,7 @@
     <RootNamespace>SochaDiff.Desktop</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Product>Socha Diff</Product>
-    <Company>Socha</Company>
+    <Company>Socha3</Company>
     <Version>1.0.0</Version>
     <!-- Lets the project compile on Linux/macOS (CI, the build box). Harmless on Windows. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
