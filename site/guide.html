@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Socha Diff guide: every control, explained</title>
+  <meta name="description" content="How to use Socha Diff: folder boxes, Compare, summary chips, A/B file links, diff views, hidden lines, selection and copy, whitespace, Settings (Ctrl+S), excluded folders and Make A/B match.">
+  <meta name="theme-color" content="#0b0f17">
+  <meta name="color-scheme" content="dark">
+  <link rel="canonical" href="https://sochadiff.socha3.com/guide.html">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Socha Diff">
+  <meta property="og:title" content="Socha Diff guide: every control, explained">
+  <meta property="og:description" content="Short animated demos and a full description of every button, box and shortcut in Socha Diff.">
+  <meta property="og:url" content="https://sochadiff.socha3.com/guide.html">
+  <meta property="og:image" content="https://sochadiff.socha3.com/assets/og-image.png">
+  <link rel="stylesheet" href="styles.css">
+  <script>document.documentElement.classList.add("js");</script>
+</head>
+<body class="guide-page">
+  <a class="skip-link" href="#guide-content">Skip to the guide</a>
+
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="index.html" aria-label="Socha Diff home">
+        <img src="favicon.svg" alt="" width="28" height="28">
+        <span>Socha Diff</span>
+      </a>
+      <nav class="nav" aria-label="Sections">
+        <a href="index.html#demo">Demo</a>
+        <a href="index.html#features">Features</a>
+        <a class="nav-keep" href="guide.html" aria-current="page">Guide</a>
+        <a href="index.html#prerequisites">Prerequisites</a>
+        <a href="index.html#requirements">Requirements</a>
+        <a class="nav-cta" href="index.html#install">Install</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="guide-hero">
+      <div class="hero-bg" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="grid-lines"></span></div>
+      <div class="wrap">
+        <p class="eyebrow"><span class="pulse-dot" aria-hidden="true"></span> User guide</p>
+        <h1>Every control in <span class="grad-text">Socha Diff</span>, explained</h1>
+        <p class="lede">What each button, box, badge and shortcut does, with short real recordings. The demos compare two copies of a small project, <code>C:\Projects\shop-v1</code> and <code>C:\Projects\shop-v2</code>.</p>
+      </div>
+    </section>
+
+    <div class="wrap guide-wrap">
+      <nav class="toc" aria-label="Guide contents">
+        <p class="toc-title">Contents</p>
+        <ol>
+          <li><a href="#quick-start">Quick start</a></li>
+          <li><a href="#folders">Folder boxes and Compare</a></li>
+          <li><a href="#matching">How A and B are matched</a></li>
+          <li><a href="#summary">Summary chips</a></li>
+          <li><a href="#links">Folder paths and file links</a></li>
+          <li><a href="#lists">Result lists and signs</a></li>
+          <li><a href="#views">Side-by-side and unified</a></li>
+          <li><a href="#gaps">Hidden unchanged lines</a></li>
+          <li><a href="#copy">Selecting and copying</a></li>
+          <li><a href="#whitespace">Whitespace</a></li>
+          <li><a href="#settings">Settings (<kbd>Ctrl</kbd>+<kbd>S</kbd>)</a></li>
+          <li><a href="#exclude">Excluded folders</a></li>
+          <li><a href="#sync">Make A/B match</a></li>
+          <li><a href="#messages">Dialogs and messages</a></li>
+          <li><a href="#keys">Keyboard and mouse reference</a></li>
+          <li><a href="#storage">What is remembered</a></li>
+        </ol>
+      </nav>
+
+      <div class="guide-content" id="guide-content">
+
+        <!-- ============ QUICK START ============ -->
+        <section id="quick-start" class="guide-section">
+          <h2>Quick start</h2>
+          <ol class="steps">
+            <li><span class="step-n">1</span><div><strong>Enter two folders.</strong> Type or paste a path into <span class="ui">Folder A</span> and <span class="ui">Folder B</span> (quotes from Explorer's <em>Copy as path</em> are fine).</div></li>
+            <li><span class="step-n">2</span><div><strong>Click <span class="ui ui-primary">Compare</span>.</strong> Socha Diff scans both folders, including subfolders, and lists every file that differs.</div></li>
+            <li><span class="step-n">3</span><div><strong>Read and act.</strong> Filter with the summary chips, open either copy of a file with its <span class="side side-a">A</span> / <span class="side side-b">B</span> link, copy text from one side, or make one folder match the other.</div></li>
+          </ol>
+        </section>
+
+        <!-- ============ FOLDERS + COMPARE ============ -->
+        <section id="folders" class="guide-section">
+          <h2>Folder boxes and Compare</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-compare.webp" type="image/webp">
+              <img src="assets/guide-compare.gif" alt="Typing Folder A, a mistyped Folder B shows 'Folder not found', fixing it, Compare, then filtering with the only in A and only in B chips" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption>Folder check on leaving a box, Compare, then the <em>only in A</em> and <em>only in B</em> chips.</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt><span class="ui">Folder A</span> <span class="ui">Folder B</span></dt><dd>The two folders to compare. Surrounding spaces and one pair of quotes are removed, so <code>"C:\Work\site"</code> pasted from Explorer works. The last folders you compared successfully are filled in when the app starts.</dd></div>
+            <div><dt>Folder check</dt><dd>When you leave a box, Socha Diff checks the path. A folder gets a subtle green border; otherwise the box turns red with <em>Folder not found</em>, <em>Not a folder</em>, <em>Access denied</em> or <em>Folder not accessible</em> above it. Typing clears the check. It is advice only and never blocks Compare.</dd></div>
+            <div><dt><span class="ui ui-primary">Compare</span></dt><dd>Compares the two folders with the current settings. A <em>Comparing&hellip;</em> spinner shows at the top while it runs. With an empty box you get <em>Missing folder paths</em>; a folder that does not exist gives <em>Compare failed</em> with the reason.</dd></div>
+            <div><dt><span class="ui ui-star">&#10022;</span> pending star</dt><dd>A small amber star on Compare's corner means the settings changed since the last Compare, so the results on screen use the old settings. Hover it for <em>Settings changed. Run Compare again to apply them.</em> It disappears after a Compare, or when you change the settings back.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ MATCHING ============ -->
+        <section id="matching" class="guide-section">
+          <h2>How Folder A and Folder B are matched</h2>
+          <ul class="bullets">
+            <li>Both folders are scanned <strong>including all subfolders</strong>. Symbolic links are skipped, and so are <a href="#exclude">excluded folders</a>.</li>
+            <li>A file is paired with the file at the <strong>same relative path</strong> on the other side: <code>src/app.js</code> in A with <code>src/app.js</code> in B. Paths are shown with <code>/</code>.</li>
+            <li>Names must match exactly, <strong>including letter case</strong>. <code>Readme.md</code> in A and <code>README.md</code> in B are listed as <em>only in A</em> and <em>only in B</em>, not as a pair.</li>
+            <li>Files without a partner go to <strong>Only in A</strong> or <strong>Only in B</strong>.</li>
+            <li>Paired text files are compared as UTF-8. With <em>Ignore whitespace</em> on (the default), files whose only differences are spaces, tabs, blank lines or CRLF/LF line endings go to <strong>whitespace-only (ignored)</strong>.</li>
+            <li><strong>Binary files</strong> (a zero byte in the first 8,000 bytes) and <strong>files over 5 MB</strong> are compared byte for byte, with no line diff. Different ones are listed under <em>Binary / non-text files that differ</em>, as are text files with too many changes to show a line diff.</li>
+            <li>Files or folders that cannot be read are listed under <strong>Errors</strong> with the reason.</li>
+          </ul>
+        </section>
+
+        <!-- ============ SUMMARY CHIPS ============ -->
+        <section id="summary" class="guide-section">
+          <h2>Summary chips</h2>
+          <p>After a Compare, a row of chips counts the files in each group:</p>
+          <p class="chip-demo" aria-hidden="true"><span class="ui ui-chip"><b class="c-amber">4</b> differing</span> <span class="ui ui-chip"><b class="side-a">1</b> only in A</span> <span class="ui ui-chip"><b class="side-b">1</b> only in B</span> <span class="ui ui-chip"><b>1</b> whitespace-only (ignored)</span> <span class="ui ui-chip ui-off"><b>0</b> binary diff</span> <span class="ui ui-chip"><b>2</b> identical</span> <span class="ui ui-chip ui-off"><b>0</b> errors</span></p>
+          <dl class="controls">
+            <div><dt>Click a chip</dt><dd>Shows only that group. Click the same chip again to show everything. Chips with a count of 0 are greyed out and cannot be clicked.</dd></div>
+            <div><dt>No differences</dt><dd>If nothing differs, a line says <em>The folders match</em>, or how many files differ only in whitespace.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ LINKS ============ -->
+        <section id="links" class="guide-section">
+          <h2>Folder paths and file links</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-links.webp" type="image/webp">
+              <img src="assets/guide-links.gif" alt="Hovering the A: folder path shows 'Open folder in Windows Explorer'; hovering the A and B links after a file name shows their tooltips" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption>Hover shows what a click does. (The recording does not click, since Explorer and other apps open in their own windows.)</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt><span class="side-a">A:</span> / <span class="side-b">B:</span> folder path</dt><dd>The compared folders are shown above the results, aligned with the two diff panes. <strong>Click</strong> one to open that folder in <strong>Windows Explorer</strong>. It opens the folder itself; no file is selected.</dd></div>
+            <div><dt><span class="side side-a">A</span> <span class="side side-b">B</span> after a file</dt><dd><strong>Left-click</strong> opens that folder's copy of the file with its <strong>default Windows app</strong>, just like double-clicking it in Explorer. <strong>Right-click</strong> opens the Windows <strong>Open with</strong> picker, where you choose an app <em>Just once</em> or <em>Always</em>. Files that exist on one side only show just that letter.</dd></div>
+            <div><dt>Good to know</dt><dd>Opening files and folders works on Windows (in the browser version too, when the server runs on Windows); otherwise a <em>Could not open the path</em> message explains why. Apps and Explorer windows you open stay open after Socha Diff closes.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ LISTS ============ -->
+        <section id="lists" class="guide-section">
+          <h2>Result lists and signs</h2>
+          <p>Results are grouped under headings with a count: <em>Differing files</em>, <em>Only in A</em>, <em>Only in B</em>, <em>Binary / non-text files that differ</em>, <em>Differ only in whitespace (ignored)</em>, <em>Errors</em> and <em>Identical</em>. Every file name ends with its sides in brackets:</p>
+          <table class="ref-table">
+            <thead><tr><th scope="col">Shown as</th><th scope="col">Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><span class="path-demo">( <span class="side side-a">A</span><span class="side-sep">&ne;</span><span class="side side-b">B</span> )</span></td><td>The two copies differ (text or binary).</td></tr>
+              <tr><td><span class="path-demo">( <span class="side side-a">A</span><span class="side-sep">&asymp;</span><span class="side side-b">B</span> )</span></td><td>They differ only in whitespace, which is being ignored.</td></tr>
+              <tr><td><span class="path-demo">( <span class="side side-a">A</span><span class="side-sep">=</span><span class="side side-b">B</span> )</span></td><td>Identical.</td></tr>
+              <tr><td><span class="path-demo">( <span class="side side-a">A</span> )</span> / <span class="path-demo">( <span class="side side-b">B</span> )</span></td><td>The file exists only in that folder.</td></tr>
+              <tr><td><span class="path-demo">( <span class="side side-a">A</span> - <span class="side side-b">B</span> )</span></td><td>An entry in the Errors list.</td></tr>
+            </tbody>
+          </table>
+          <dl class="controls">
+            <div><dt>File header</dt><dd>Each differing file has a header with its path, the <span class="side side-a">A</span>/<span class="side side-b">B</span> links and change counts: <span class="c-green">+N</span> lines added, <span class="c-red">-N</span> removed, <span class="c-amber">~N</span> changed. Click the header to fold or unfold that file.</dd></div>
+            <div><dt>Large comparisons</dt><dd>With up to 25 differing files every diff opens automatically. With more, the files start folded to stay fast; click a header to open it.</dd></div>
+            <div><dt>Notes</dt><dd>Binary and error entries carry a short note, such as <em>binary file &mdash; compared byte-for-byte</em> or the reason a file could not be read.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ VIEWS ============ -->
+        <section id="views" class="guide-section">
+          <h2>Side-by-side and unified</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-views.webp" type="image/webp">
+              <img src="assets/guide-views.gif" alt="Switching to Unified and back to Side-by-side, then folding and unfolding a file by clicking its header" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption>Switching views, then folding a file by its header.</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt><span class="ui ui-seg"><span class="on">Side&#8209;by&#8209;side</span><span>Unified</span></span></dt><dd><strong>Side-by-side</strong> (default) shows A on the left and B on the right, with unchanged lines aligned. <strong>Unified</strong> shows one column: removed lines (<span class="c-red">-</span>) then added lines (<span class="c-green">+</span>). Switching is instant and does not re-scan the folders.</dd></div>
+            <div><dt>Colours</dt><dd>Red is A (removed), green is B (added). On a changed line, the characters that actually differ get a brighter highlight.</dd></div>
+            <div><dt>Long lines</dt><dd>Lines do not wrap. A thin scrollbar under each side pans that side left and right; it shows when you hover and only when a line is too long to fit.</dd></div>
+            <div><dt>Unified is read-only</dt><dd>Text cannot be selected in the unified view. Switch to side-by-side to <a href="#copy">copy</a>.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ GAPS ============ -->
+        <section id="gaps" class="guide-section">
+          <h2>Hidden unchanged lines</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-gaps.webp" type="image/webp">
+              <img src="assets/guide-gaps.gif" alt="Clicking '39 unchanged lines' reveals the lines in place; clicking the marker again hides them" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption>Expand a gap in place, then click the same marker to hide it again.</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt><span class="ui ui-gap">&ctdot; 39 unchanged lines &ctdot;</span></dt><dd>Three unchanged lines are kept around each change; longer unchanged stretches fold into this marker. <strong>Click</strong> it to show the lines right there. The marker stays in place and reads <em>(click to hide)</em>; click it again to fold them back. Works in both views.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ COPY ============ -->
+        <section id="copy" class="guide-section">
+          <h2>Selecting and copying</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-copy.webp" type="image/webp">
+              <img src="assets/guide-copy.gif" alt="Drag-selecting lines in the B pane, right-clicking and choosing Copy, clicking a line number to select a line, then Ctrl+A selecting the whole A side" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption>Drag-select, the Copy menu, a line-number click, and <kbd>Ctrl</kbd>+<kbd>A</kbd> for one side.</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt>Drag to select</dt><dd>Selection stays inside the side where you started: it cannot cross from A to B, into another file, or into the rest of the page. Dragging near a side's left or right edge scrolls long lines slowly.</dd></div>
+            <div><dt>Line numbers</dt><dd>Click a line number to select that whole line; drag over line numbers to select several; <kbd>Shift</kbd>+click extends the selection. Triple-click text selects its line.</dd></div>
+            <div><dt><kbd>Ctrl</kbd>+<kbd>A</kbd></dt><dd>Selects all text of the side you clicked in, not the whole page.</dd></div>
+            <div><dt><span class="ui ui-menu">Copy</span> menu</dt><dd><strong>Right-click</strong> a diff side for Socha Diff's own <em>Copy</em> menu. It copies your selection, or the whole side if nothing there is selected. <kbd>Ctrl</kbd>+<kbd>C</kbd> works too. <kbd>Esc</kbd>, scrolling or clicking elsewhere closes the menu.</dd></div>
+            <div><dt>Exact text</dt><dd>Copied text is verbatim: whitespace as in the file, and each line's own CRLF or LF. The newline at the end of a line is a selectable character: drag onto or past it to include it. When a selection spans a folded gap (with the lines around it fully selected), the hidden lines are copied too.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ WHITESPACE ============ -->
+        <section id="whitespace" class="guide-section">
+          <h2>Whitespace</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-whitespace.webp" type="image/webp">
+              <img src="assets/guide-whitespace.gif" alt="The whitespace-only chip lists src/format.js; Whitespace chars shows dots for spaces; clicking the Whitespace ignored badge switches to Whitespace aware and Compare shows format.js as differing" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption>The whitespace-only list, <em>Whitespace chars</em>, then the &para; badge and a whitespace-aware Compare.</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt><span class="ui ui-badge-on">&para; Whitespace ignored</span> <span class="ui ui-badge-off">&para; Whitespace aware</span></dt><dd>The badge in the header shows the comparison mode. <strong>Ignored</strong> (green, default): spaces, tabs, blank lines and line endings do not count as differences. <strong>Aware</strong> (amber): they do, and a line whose only change is CRLF vs LF is shown as changed, with the line ending highlighted. Click the badge (or press <kbd>Enter</kbd>/<kbd>Space</kbd> on it) to switch; it is the same setting as the checkbox in <a href="#settings">Settings</a>. Then Compare again.</dd></div>
+            <div><dt><span class="ui">&#128065; Whitespace chars</span></dt><dd>Shows invisible characters in the diffs: <code>&middot;</code> for a space, <code>&rarr;</code> for a tab, symbols for other control characters, and at each line end <code>&darr;</code> for LF or <code>&crarr;</code> for CRLF (a line with no final newline has no mark). The eye opens when the marks are on. Display only: copied text is never changed.</dd></div>
+            <div><dt>whitespace-only (ignored) list</dt><dd>While whitespace is ignored, files that differ only in whitespace are listed under <em>Differ only in whitespace (ignored)</em> with <span class="path-demo">( <span class="side side-a">A</span><span class="side-sep">&asymp;</span><span class="side side-b">B</span> )</span>. <em>Make A/B match</em> leaves them alone.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ SETTINGS ============ -->
+        <section id="settings" class="guide-section">
+          <h2>Settings (<kbd>Ctrl</kbd>+<kbd>S</kbd>)</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-shortcut.webp" type="image/webp">
+              <img src="assets/guide-shortcut.gif" alt="Hovering Settings shows 'Ctrl+S to open Settings'; pressing Ctrl+S opens the dialog; unticking Ignore whitespace saves automatically; Esc closes it; the pending star appears on Compare; clicking the badge switches back and the star disappears" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption><kbd>Ctrl</kbd>+<kbd>S</kbd>, an automatic save, <kbd>Esc</kbd>, and the pending star.</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt><span class="ui">Settings</span> / <kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>Opens the Settings dialog. The shortcut is exactly <kbd>Ctrl</kbd>+<kbd>S</kbd> (no Shift or Alt) and works anywhere in the app, even while typing in a folder box. Hover the button for the reminder <em>Ctrl+S to open Settings</em>.</dd></div>
+            <div><dt><span class="ui ui-check">&#10003;</span> Ignore whitespace differences</dt><dd>On by default. When off, differences in spacing, indentation and line endings are reported as changes. Always in step with the &para; badge.</dd></div>
+            <div><dt>Excluded folder names</dt><dd>One folder name per line. See <a href="#exclude">Excluded folders</a>.</dd></div>
+            <div><dt>Saving</dt><dd>There is no Save button: the checkbox saves immediately, the list saves shortly after you stop typing. A status line confirms <em>Saved.</em>, or <em>Saved. Run a new comparison to apply the changes.</em>, and fades after a few seconds. Errors show there in red.</dd></div>
+            <div><dt><span class="ui">Reset to default</span></dt><dd>Restores whitespace ignoring and the default excluded folders.</dd></div>
+            <div><dt>Closing</dt><dd>The <span class="ui">&times;</span> button, <kbd>Esc</kbd>, or a click outside the dialog.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ EXCLUDE ============ -->
+        <section id="exclude" class="guide-section">
+          <h2>Excluded folders</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-exclude.webp" type="image/webp">
+              <img src="assets/guide-exclude.gif" alt="Adding legacy and docs to Excluded folder names, the status says Saved, closing Settings, the pending star, Compare, and the only in A and only in B counts drop to 0" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption>Adding <code>legacy</code> and <code>docs</code>, then Compare: their files drop out.</figcaption>
+          </figure>
+          <ul class="bullets">
+            <li><strong>One folder name per line.</strong> Every folder with that name is skipped, at any depth, in both A and B.</li>
+            <li>Matching <strong>ignores letter case</strong>: <code>Node_Modules</code> matches <code>node_modules</code>. Names are saved in lower case, sorted, without duplicates.</li>
+            <li><strong>Names only.</strong> Entries with <code>\</code> or <code>/</code>, or <code>.</code> / <code>..</code>, are rejected (<em>Excluded entries must be directory names, not paths.</em>). Wildcards are not supported: <code>*.tmp</code> would only match a folder literally named that.</li>
+            <li>Only folders are excluded, not files.</li>
+            <li>Excluded folders are left out of the comparison and are never touched by <a href="#sync">Make A/B match</a>.</li>
+            <li>Default list: <code>.git</code> <code>.github</code> <code>.vs</code> <code>.vscode</code> <code>bin</code> <code>dist</code> <code>node_modules</code> <code>obj</code>. <span class="ui">Reset to default</span> brings it back.</li>
+          </ul>
+        </section>
+
+        <!-- ============ SYNC ============ -->
+        <section id="sync" class="guide-section">
+          <h2>Make A/B match</h2>
+          <figure class="clip">
+            <picture>
+              <source srcset="assets/guide-sync.webp" type="image/webp">
+              <img src="assets/guide-sync.gif" alt="Clicking Make B match A opens 'Confirm folder mirroring'; OK updates Folder B and a message reports 1 created, 4 updated, 1 deleted" width="1024" height="640" loading="lazy" decoding="async">
+            </picture>
+            <figcaption><em>Make B match A</em>, the confirmation, and the result.</figcaption>
+          </figure>
+          <dl class="controls">
+            <div><dt><span class="ui">Make B match A</span> <span class="ui">Make A match B</span></dt><dd>Appear after a Compare. They change the <em>target</em> folder (B or A) to match the other one, using the current results: differing and binary files are overwritten, files missing from the target are created (with their folders), and files that exist only in the target are <strong>deleted</strong>.</dd></div>
+            <div><dt>What is left alone</dt><dd>Identical files, whitespace-only files while whitespace is ignored, excluded folders, and anything else that was not in the comparison. Folders emptied by deletions are not removed.</dd></div>
+            <div><dt>Safety checks</dt><dd>First Socha Diff checks that neither folder changed since the Compare; if one did, <em>Folder contents changed</em> aborts, and you need to Compare again. Otherwise <em>Confirm folder mirroring</em> asks before anything happens (<span class="ui">Cancel</span> / <span class="ui ui-primary">OK</span>; <kbd>Esc</kbd> cancels). The check runs once more right before files are changed.</dd></div>
+            <div><dt>Afterwards</dt><dd>A message such as <em>Updated Folder B: 1 created, 4 updated, 1 deleted.</em> appears at the top and the results refresh. Problems are reported in <em>Sync completed with errors</em>.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ MESSAGES ============ -->
+        <section id="messages" class="guide-section">
+          <h2>Dialogs and messages</h2>
+          <dl class="controls">
+            <div><dt>Top message</dt><dd>Progress (<em>Comparing&hellip;</em>, <em>Updating Folder B&hellip;</em>) with a spinner, and sync results, which fade after a few seconds.</dd></div>
+            <div><dt><span class="c-red">&#10006;</span> Error dialogs</dt><dd><em>Missing folder paths</em>, <em>Compare failed</em>, <em>Could not open the path</em>, <em>Folder contents changed</em>, <em>Sync completed with errors</em>, <em>Could not update the folder</em>. Close with <span class="ui ui-primary">OK</span>.</dd></div>
+            <div><dt><span class="c-amber">&#9888;</span> Confirm folder mirroring</dt><dd>The only question the app asks, before <a href="#sync">Make A/B match</a> changes files.</dd></div>
+            <div><dt>Tooltips</dt><dd>The Settings button, the &para; badge and the pending star show a tooltip next to the mouse pointer (or above them when focused with the keyboard). Links show their action on hover.</dd></div>
+            <div><dt>Right-click elsewhere</dt><dd>In the folder boxes you get the usual Cut / Copy / Paste menu. Diff sides show the <a href="#copy">Copy menu</a>; <span class="side side-a">A</span>/<span class="side side-b">B</span> file links open <em>Open with</em>.</dd></div>
+          </dl>
+        </section>
+
+        <!-- ============ KEYS ============ -->
+        <section id="keys" class="guide-section">
+          <h2>Keyboard and mouse reference</h2>
+          <table class="ref-table">
+            <thead><tr><th scope="col">Input</th><th scope="col">Where</th><th scope="col">Does</th></tr></thead>
+            <tbody>
+              <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Anywhere</td><td>Open Settings</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>Settings, mirroring dialog, Copy menu</td><td>Close (in the mirroring dialog: Cancel)</td></tr>
+              <tr><td><kbd>Enter</kbd></td><td>Folder box</td><td>Compare</td></tr>
+              <tr><td><kbd>Enter</kbd> / <kbd>Space</kbd></td><td>&para; badge</td><td>Switch whitespace ignored / aware</td></tr>
+              <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>A diff side</td><td>Select that whole side</td></tr>
+              <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>A diff side</td><td>Copy the selection</td></tr>
+              <tr><td>Click</td><td><span class="side side-a">A</span> / <span class="side side-b">B</span> after a file</td><td>Open that copy in its default app</td></tr>
+              <tr><td>Right-click</td><td><span class="side side-a">A</span> / <span class="side side-b">B</span> after a file</td><td>Windows <em>Open with</em> picker</td></tr>
+              <tr><td>Click</td><td><span class="side-a">A:</span> / <span class="side-b">B:</span> folder path</td><td>Open the folder in Windows Explorer</td></tr>
+              <tr><td>Right-click</td><td>A diff side</td><td>Copy menu (selection, or the whole side)</td></tr>
+              <tr><td>Click / drag / <kbd>Shift</kbd>+click</td><td>Line numbers</td><td>Select whole lines</td></tr>
+              <tr><td>Triple-click</td><td>Diff text</td><td>Select the line</td></tr>
+              <tr><td>Click</td><td>&ctdot; N unchanged lines &ctdot;</td><td>Show / hide the hidden lines</td></tr>
+              <tr><td>Click</td><td>File header</td><td>Fold / unfold that file</td></tr>
+              <tr><td>Click</td><td>Summary chip</td><td>Show only that group (again: show all)</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- ============ STORAGE ============ -->
+        <section id="storage" class="guide-section">
+          <h2>What is remembered</h2>
+          <ul class="bullets">
+            <li><strong>Settings</strong> (whitespace mode and excluded folders) are saved as you change them and kept across launches and updates, in <code>%LOCALAPPDATA%\SochaDiff</code> (<code>.socha-diff-settings.json</code>).</li>
+            <li><strong>The last two folders</strong> you compared successfully are filled in at the next start.</li>
+            <li><strong>Results</strong> survive a page reload while the app stays open, together with the view, the active chip and <em>Whitespace chars</em>, unless the comparison is very large (more than 150 differing files or 20,000 diff rows).</li>
+            <li>Nothing is uploaded: the comparison runs locally on <code>127.0.0.1</code>.</li>
+          </ul>
+          <p class="guide-back"><a class="btn btn-primary" href="index.html#install">Install Socha Diff</a> <a class="btn btn-secondary" href="#top">Back to top</a></p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <span>&copy; Socha3</span>
+      <span class="footer-links">
+        <a href="https://socha3.com" rel="noopener">Socha3.com</a>
+        <a href="index.html">Home</a>
+        <a href="index.html#prerequisites">Prerequisites</a>
+        <a href="index.html#install">Install</a>
+      </span>
+    </div>
+  </footer>
+
+  <script src="site.js" defer></script>
+</body>
+</html>

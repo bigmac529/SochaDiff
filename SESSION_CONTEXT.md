@@ -790,3 +790,14 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
 - A staged bundle still wins in Debug (stale copy in `bin\Debug\...\app\` included); delete both
   or set `SOCHA_APP_DIR` to use the repo. Publish profiles and publish-site.ps1 use Release, so the
   ClickOnce payload and CI are unchanged (Release dll contains no repo path).
+
+## 14.3 Site guide page and animated demos (2026-09-27)
+
+- `site/guide.html`: full user guide (every control, TOC, lazy-loaded `<picture>` clips) sharing
+  the home page's nav/styles. The home page's Tips section is a short summary linking to it.
+- Demos are animated WebP with GIF fallbacks: `site/assets/home-demo.webp|gif` (+
+  `home-demo-poster.webp` for `prefers-reduced-motion`) and `guide-<scene>.webp|gif`. The old
+  `demo.webm|mp4|gif` and `demo-poster.webp` were removed (deploys never delete, so old copies
+  may linger on the server). Recorded by `desktop/scripts/record-scenes.js`, encoded by
+  `desktop/scripts/encode-demos.sh` (see desktop/README.md "Site demos"); `record-demo.js` is legacy.
+- `web.config` already mapped `.webp`; `guide.html` got the same no-cache rule as `index.html`.

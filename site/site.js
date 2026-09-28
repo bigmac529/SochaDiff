@@ -16,34 +16,6 @@
     items.forEach(function (el) { el.classList.add("in"); });
   }
 
-  // Demo video: GIF fallback if the video cannot play; honor reduced motion; pause button.
-  var video = document.getElementById("demo-video");
-  var toggle = document.getElementById("demo-toggle");
-  if (video) {
-    var useGif = function () {
-      var img = document.createElement("img");
-      img.src = "assets/demo.gif";
-      img.alt = "Socha Diff demo recording";
-      img.width = 960; img.height = 600;
-      video.replaceWith(img);
-      if (toggle) toggle.remove();
-    };
-    var sources = video.querySelectorAll("source");
-    var failed = 0;
-    sources.forEach(function (s) {
-      s.addEventListener("error", function () { if (++failed === sources.length) useGif(); });
-    });
-    var setPaused = function (paused) {
-      if (paused) video.pause(); else video.play().catch(function () {});
-      if (toggle) { toggle.textContent = paused ? "Play" : "Pause"; toggle.setAttribute("aria-pressed", String(paused)); }
-    };
-    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      video.removeAttribute("autoplay");
-      setPaused(true);
-    }
-    if (toggle) toggle.addEventListener("click", function () { setPaused(!video.paused); });
-  }
-
   // Copy buttons for the "check what you have" commands.
   document.querySelectorAll(".copy-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {

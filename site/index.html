@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Socha Diff for Windows: compare two folders, see every real difference</title>
-  <meta name="description" content="Socha Diff is a fast Windows app for comparing two folders. Side-by-side and unified diffs, hidden-gap expand, precise copy and line-ending highlighting. Runs locally with no cloud.">
+  <meta name="description" content="Socha Diff is a fast Windows app for comparing two folders. Side-by-side and unified diffs, hidden-gap expand, precise copy, excluded folders and line-ending highlighting. Runs locally with no cloud.">
   <meta name="theme-color" content="#0b0f17">
   <meta name="color-scheme" content="dark">
   <link rel="canonical" href="https://sochadiff.socha3.com/">
@@ -39,6 +39,7 @@
       <nav class="nav" aria-label="Sections">
         <a href="#demo">Demo</a>
         <a href="#features">Features</a>
+        <a class="nav-keep" href="guide.html">Guide</a>
         <a href="#prerequisites">Prerequisites</a>
         <a href="#requirements">Requirements</a>
         <a class="nav-cta" href="#install">Install</a>
@@ -85,15 +86,14 @@
             </span>
           </div>
           <div class="app-screen">
-            <video id="demo-video" autoplay muted loop playsinline preload="metadata" poster="assets/demo-poster.webp" width="1278" height="798">
-              <source src="assets/demo.webm" type="video/webm">
-              <source src="assets/demo.mp4" type="video/mp4">
-              <img src="assets/demo.gif" alt="Socha Diff demo: enter two folders, Compare, expand hidden lines, select and copy text, switch to unified view" width="960" height="600">
-            </video>
-            <button class="demo-toggle" type="button" id="demo-toggle" aria-pressed="false">Pause</button>
+            <picture>
+              <source media="(prefers-reduced-motion: reduce)" srcset="assets/home-demo-poster.webp" type="image/webp">
+              <source srcset="assets/home-demo.webp" type="image/webp">
+              <img src="assets/home-demo.gif" alt="Socha Diff demo: enter two folders, Compare, hover the A/B file links, Ctrl+S to open Settings and exclude a folder, expand hidden lines, select and copy text, switch to unified view" width="960" height="600" decoding="async" fetchpriority="high">
+            </picture>
           </div>
         </div>
-        <p class="demo-caption">A real, unedited recording: two folders in, Compare, expand hidden lines, drag-select across lines, right-click <em>Copy</em>, switch to unified. <a href="assets/demo.gif">GIF version</a></p>
+        <p class="demo-caption">A real, unedited recording: two folders in, Compare, the A/B file links, <kbd>Ctrl</kbd> + <kbd>S</kbd> to exclude a folder, expand hidden lines, select and <em>Copy</em>, unified view. <a href="assets/home-demo.gif">GIF version</a> &middot; <a href="guide.html">more demos in the guide</a></p>
       </div>
     </section>
 
@@ -133,6 +133,48 @@
             <h3>Local, full disk access, no cloud</h3>
             <p>Point it at any two folders on your PC or network. Nothing is uploaded: the comparison engine runs privately on 127.0.0.1.</p>
           </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TIPS & FEATURES ============ -->
+    <section id="tips" class="section tips-section">
+      <div class="wrap">
+        <h2 class="section-title reveal">Tips &amp; features</h2>
+        <p class="section-lede reveal">Shortcuts that save clicks. The <a href="guide.html">full guide</a> explains every button, box and shortcut in the app.</p>
+
+        <div class="tip-grid">
+          <article class="tip reveal">
+            <p class="path-demo" aria-hidden="true"><span class="path-demo-name">src/app.js</span> ( <span class="side side-a">A</span><span class="side-sep">&ne;</span><span class="side side-b">B</span> )</p>
+            <h3>Open either copy of a file</h3>
+            <p><kbd>Click</kbd> <strong>A</strong> or <strong>B</strong> after a file name to open that copy in its default app. <kbd>Right-click</kbd> opens the Windows <em>Open with</em> picker (<em>Just once</em> or <em>Always</em>).</p>
+          </article>
+          <article class="tip reveal">
+            <p class="tip-glyph fi-green" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 13h6m-2-2 2 2-2 2"/></svg></p>
+            <h3>Jump to a folder</h3>
+            <p>Click the <strong>A:</strong> or <strong>B:</strong> folder path above the results to open that folder in Windows Explorer.</p>
+          </article>
+          <article class="tip reveal">
+            <p class="tip-keys" aria-hidden="true"><kbd>Ctrl</kbd> + <kbd>S</kbd></p>
+            <h3>Settings in one keystroke</h3>
+            <p>Opens Settings from anywhere: ignore whitespace, excluded folders. Changes save automatically; <kbd>Esc</kbd> closes it.</p>
+          </article>
+          <article class="tip reveal">
+            <p class="tip-chips" aria-hidden="true"><code>node_modules</code> <code>bin</code> <code>obj</code></p>
+            <h3>Exclude folders</h3>
+            <p>List folder names, one per line, to skip them at any depth. Matching ignores case; names only, no paths or wildcards.</p>
+          </article>
+          <article class="tip reveal">
+            <p class="path-demo" aria-hidden="true"><span class="side-a">A:</span> src/app.js &harr; <span class="side-b">B:</span> src/app.js</p>
+            <h3>Paired by relative path</h3>
+            <p>Every subfolder is scanned and files are matched by the same relative path, including letter case. Unmatched files are listed as only in A or only in B.</p>
+          </article>
+          <a class="tip tip-cta reveal" href="guide.html">
+            <span class="tip-cta-kicker">Every control, explained</span>
+            <strong>Read the Socha Diff guide</strong>
+            <span class="tip-cta-text">Short animated demos of comparing, filtering, settings, copying, hidden lines, whitespace and Make A/B match.</span>
+            <span class="btn btn-primary">Open the guide <span aria-hidden="true">&rarr;</span></span>
+          </a>
         </div>
       </div>
     </section>
@@ -266,6 +308,7 @@
       <span>&copy; Socha3</span>
       <span class="footer-links">
         <a href="https://socha3.com" rel="noopener">Socha3.com</a>
+        <a href="guide.html">Guide</a>
         <a href="#prerequisites">Prerequisites</a>
         <a href="#install">Install</a>
       </span>
