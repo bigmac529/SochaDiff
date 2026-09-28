@@ -109,7 +109,9 @@
           <ul class="bullets">
             <li>Both folders are scanned <strong>including all subfolders</strong>. Symbolic links are skipped, and so are <a href="#exclude">excluded folders</a>.</li>
             <li>A file is paired with the file at the <strong>same relative path</strong> on the other side: <code>src/app.js</code> in A with <code>src/app.js</code> in B. Paths are shown with <code>/</code>.</li>
-            <li>Names must match exactly, <strong>including letter case</strong>. <code>Readme.md</code> in A and <code>README.md</code> in B are listed as <em>only in A</em> and <em>only in B</em>, not as a pair.</li>
+            <li><strong>Letter case:</strong> Windows folders ignore letter case by default, so <code>Readme.md</code> in A and <code>README.md</code> in B are paired as the same file, and the row also shows B's real name: <span class="path-demo"><span class="path-demo-name">Readme.md</span> <em>B: README.md</em></span>.</li>
+            <li>A folder can be case-sensitive if case sensitivity is turned on for it (for example a WSL or developer folder) or if it is on a case-sensitive network share. When <strong>both</strong> folders are case-sensitive, names must match exactly. Socha Diff detects this for each folder when you compare.</li>
+            <li>A case-sensitive folder can hold two names that differ only by case, such as <code>notes.txt</code> and <code>Notes.txt</code>. When letter case is ignored they cannot be told apart, so they are listed under <strong>Errors</strong> and <a href="#sync">Make A/B match</a> never touches them.</li>
             <li>Files without a partner go to <strong>Only in A</strong> or <strong>Only in B</strong>.</li>
             <li>Paired text files are compared as UTF-8. With <em>Ignore whitespace</em> on (the default), files whose only differences are spaces, tabs, blank lines or CRLF/LF line endings go to <strong>whitespace-only (ignored)</strong>.</li>
             <li><strong>Binary files</strong> (a zero byte in the first 8,000 bytes) and <strong>files over 5 MB</strong> are compared byte for byte, with no line diff. Different ones are listed under <em>Binary / non-text files that differ</em>, as are text files with too many changes to show a line diff.</li>
@@ -141,7 +143,7 @@
           <dl class="controls">
             <div><dt><span class="side-a">A:</span> / <span class="side-b">B:</span> folder path</dt><dd>The compared folders are shown above the results, aligned with the two diff panes. <strong>Click</strong> one to open that folder in <strong>Windows Explorer</strong>. It opens the folder itself; no file is selected.</dd></div>
             <div><dt><span class="side side-a">A</span> <span class="side side-b">B</span> after a file</dt><dd><strong>Left-click</strong> opens that folder's copy of the file with its <strong>default Windows app</strong>, just like double-clicking it in Explorer. <strong>Right-click</strong> opens the Windows <strong>Open with</strong> picker, where you choose an app <em>Just once</em> or <em>Always</em>. Files that exist on one side only show just that letter.</dd></div>
-            <div><dt>Good to know</dt><dd>Opening files and folders works on Windows (in the browser version too, when the server runs on Windows); otherwise a <em>Could not open the path</em> message explains why. Apps and Explorer windows you open stay open after Socha Diff closes.</dd></div>
+            <div><dt>Good to know</dt><dd>If a file or folder cannot be opened (for example it was deleted after the Compare), a <em>Could not open the path</em> message explains why. Apps and Explorer windows you open stay open after Socha Diff closes.</dd></div>
           </dl>
         </section>
 
@@ -287,6 +289,7 @@
           </figure>
           <dl class="controls">
             <div><dt><span class="ui">Make B match A</span> <span class="ui">Make A match B</span></dt><dd>Appear after a Compare. They change the <em>target</em> folder (B or A) to match the other one, using the current results: differing and binary files are overwritten, files missing from the target are created (with their folders), and files that exist only in the target are <strong>deleted</strong>.</dd></div>
+            <div><dt>Letter case</dt><dd>Windows treats <code>Readme.md</code> and <code>README.md</code> as the same file. When a pair's names differ only by letter case, the target file gets the other side's content but keeps its own name, and it is never deleted afterwards as a leftover. Names that differ only by case inside one folder (listed under <em>Errors</em>) are left alone.</dd></div>
             <div><dt>What is left alone</dt><dd>Identical files, whitespace-only files while whitespace is ignored, excluded folders, and anything else that was not in the comparison. Folders emptied by deletions are not removed.</dd></div>
             <div><dt>Safety checks</dt><dd>First Socha Diff checks that neither folder changed since the Compare; if one did, <em>Folder contents changed</em> aborts, and you need to Compare again. Otherwise <em>Confirm folder mirroring</em> asks before anything happens (<span class="ui">Cancel</span> / <span class="ui ui-primary">OK</span>; <kbd>Esc</kbd> cancels). The check runs once more right before files are changed.</dd></div>
             <div><dt>Afterwards</dt><dd>A message such as <em>Updated Folder B: 1 created, 4 updated, 1 deleted.</em> appears at the top and the results refresh. Problems are reported in <em>Sync completed with errors</em>.</dd></div>

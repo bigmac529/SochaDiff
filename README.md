@@ -35,13 +35,15 @@ spacing are treated as unchanged.
 
 ## File name case
 
-On Windows, file and folder names are matched **case-insensitively**, like the
-filesystem does: `Readme.md` in A and `README.md` in B are the same file and are
-compared with each other (B's real name is shown next to A's). On Linux and
-other *nix systems names are matched exactly. **Make A/B match** overwrites such a
-pair in place, keeping the target's name casing, and never deletes a file that is
-the one it just wrote. Set `SOCHA_PATH_CASE=insensitive` or `sensitive` to override
-the platform default (for example on a case-insensitive macOS volume).
+Socha Diff checks how each compared folder's filesystem treats letter case,
+without writing to it. If **either** folder ignores case (Windows NTFS, macOS
+APFS, exFAT/FAT drives), `Readme.md` in A and `README.md` in B are compared as
+one file, and B's real name is shown next to A's. If both folders are case-sensitive
+(typical Linux, case-sensitive NTFS directories), names are matched exactly.
+**Make A/B match** overwrites such a pair in place, keeping the target's name
+casing, and never deletes a file that is the one it just wrote. Set
+`SOCHA_PATH_CASE=insensitive` or `sensitive` to override the detection
+(default `auto`).
 
 ## Requirements
 
@@ -103,9 +105,12 @@ Requires Playwright Chromium once (`npx playwright install chromium`). If browse
 npm run test:pathcase
 ```
 
-Runs both path-case modes (via `SOCHA_PATH_CASE`) on any OS: pairing, the only-in
-lists, whitespace-only pairs, case clashes and both Make match directions. The
-browser part soft-skips without Playwright.
+Covers detection and every A/B combination (both case-sensitive, both
+case-insensitive, mixed): pairing, the only-in lists, whitespace-only pairs, case
+clashes and both Make match directions. Optional real-volume checks run when
+`SOCHA_PATHCASE_INSENSITIVE_DIR` points to a folder on a case-insensitive volume
+(and `SOCHA_PATHCASE_EMPTY_MOUNT` to an empty dedicated mount for the fallback
+probe). The browser part soft-skips without Playwright.
 
 ## Project layout
 

@@ -14,7 +14,6 @@ const {
   setIgnoreWhitespace,
   getIgnoreWhitespace,
   DEFAULT_IGNORE_WHITESPACE,
-  pathKey,
 } = require("./lib/compare");
 
 const app = express();
@@ -39,11 +38,11 @@ function normalizeFolderPath(value) {
 function resolveFileTarget(folder, relPath) {
   const resolvedFolder = path.resolve(folder);
   const target = path.resolve(resolvedFolder, relPath);
-  // Containment follows the platform case rule (case-insensitive on Windows).
-  const folderKey = pathKey(resolvedFolder);
-  const targetKey = pathKey(target);
-  const prefix = folderKey.endsWith(path.sep) ? folderKey : folderKey + path.sep;
-  if (targetKey !== folderKey && !targetKey.startsWith(prefix)) {
+  // `target` is built from `resolvedFolder`, so an exact (case-sensitive)
+  // prefix test is correct on every filesystem. A drive root ("C:\\") already
+  // ends with the separator.
+  const prefix = resolvedFolder.endsWith(path.sep) ? resolvedFolder : resolvedFolder + path.sep;
+  if (target !== resolvedFolder && !target.startsWith(prefix)) {
     return { error: "Invalid file path." };
   }
   try {
