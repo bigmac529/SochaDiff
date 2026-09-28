@@ -11,7 +11,8 @@
     "prestart": "node scripts/free-port.js",
     "start": "node server.js --open",
     "test:selection": "node tests/selection-chaotic-drag.js && node tests/newline-selection.js",
-    "test:paths": "node tests/path-validation.js"
+    "test:paths": "node tests/path-validation.js",
+    "test:pathcase": "node tests/path-case.js"
   },
   "dependencies": {
     "diff": "^5.2.0",

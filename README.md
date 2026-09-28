@@ -33,6 +33,16 @@ in whitespace and are **not** reported as a difference (equivalent to
 diff uses a whitespace-insensitive comparator, so lines that differ only in
 spacing are treated as unchanged.
 
+## File name case
+
+On Windows, file and folder names are matched **case-insensitively**, like the
+filesystem does: `Readme.md` in A and `README.md` in B are the same file and are
+compared with each other (B's real name is shown next to A's). On Linux and
+other *nix systems names are matched exactly. **Make A/B match** overwrites such a
+pair in place, keeping the target's name casing, and never deletes a file that is
+the one it just wrote. Set `SOCHA_PATH_CASE=insensitive` or `sensitive` to override
+the platform default (for example on a case-insensitive macOS volume).
+
 ## Requirements
 
 - Node.js 18+ (developed on Node 22).
@@ -86,6 +96,16 @@ npm run test:selection
 ```
 
 Requires Playwright Chromium once (`npx playwright install chromium`). If browsers are missing, the script soft-skips with install instructions instead of failing the run. The harness starts `server.js` on an ephemeral port and uses `sample/sel-*` and `sample/blank-*` fixtures.
+
+## Path case tests
+
+```sh
+npm run test:pathcase
+```
+
+Runs both path-case modes (via `SOCHA_PATH_CASE`) on any OS: pairing, the only-in
+lists, whitespace-only pairs, case clashes and both Make match directions. The
+browser part soft-skips without Playwright.
 
 ## Project layout
 

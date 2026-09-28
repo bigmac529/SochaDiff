@@ -966,6 +966,13 @@ button {
   font-weight: 700;
 }
 
+/* B's real name when it differs from A's only by letter case. */
+.path-case-alt {
+  color: var(--muted);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
 .path-side-link {
   display: inline-block;
   font-size: 1.15em;

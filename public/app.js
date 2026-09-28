@@ -95,26 +95,41 @@ function sidesGap() {
 
 // The "( A ≠ B )" suffix appended after every displayed file path. "a"/"b"
 // kinds (only-in-A / only-in-B) show just the existing side, with no separator.
-function fileSidesSuffix(relPath, kind) {
+// Each link opens that side's real on-disk name: `pathA`/`pathB` are present
+// when the names differ by letter case (case-insensitive matching on Windows).
+function fileSidesSuffix(item, kind) {
+  const relA = item.pathA || item.path;
+  const relB = item.pathB || item.path;
   const span = el("span", "path-sides");
   if (kind === "a") {
-    span.append(" (", sidesGap(), fileSideLink("A", lastResult.folderA, relPath), sidesGap(), ")");
+    span.append(" (", sidesGap(), fileSideLink("A", lastResult.folderA, relA), sidesGap(), ")");
   } else if (kind === "b") {
-    span.append(" (", sidesGap(), fileSideLink("B", lastResult.folderB, relPath), sidesGap(), ")");
+    span.append(" (", sidesGap(), fileSideLink("B", lastResult.folderB, relB), sidesGap(), ")");
   } else {
     const icon = SIDE_ICON_BY_KIND[kind];
     const separator = icon ? el("span", "path-sides-icon", icon) : " - ";
     span.append(
       " (",
       sidesGap(),
-      fileSideLink("A", lastResult.folderA, relPath),
+      fileSideLink("A", lastResult.folderA, relA),
       separator,
-      fileSideLink("B", lastResult.folderB, relPath),
+      fileSideLink("B", lastResult.folderB, relB),
       sidesGap(),
       ")"
     );
   }
   return span;
+}
+
+// A displayed file path: A's name, plus B's real name when it differs only by
+// letter case (the two were paired because paths are case-insensitive here).
+function appendFilePath(parent, className, item) {
+  parent.appendChild(el("span", className, item.path));
+  if (item.pathB && item.pathB !== item.path) {
+    const alt = el("span", "path-case-alt", `B: ${item.pathB}`);
+    alt.title = "Folder B's copy has the same name except for letter case; names are matched case-insensitively on this system.";
+    parent.append(" ", alt);
+  }
 }
 
 // Map a control character to its Unicode "control picture" glyph.
@@ -2194,8 +2209,8 @@ function renderUnified(rows, file) {
 function renderFileDiff(file, autoOpen) {
   const details = el("details", "file-diff");
   const summary = el("summary");
-  summary.appendChild(el("span", "name", file.path));
-  summary.appendChild(fileSidesSuffix(file.path, "diff"));
+  appendFilePath(summary, "name", file);
+  summary.appendChild(fileSidesSuffix(file, "diff"));
   if (file.stats) {
     if (file.stats.added) summary.appendChild(el("span", "stat add", `+${file.stats.added}`));
     if (file.stats.removed) summary.appendChild(el("span", "stat del", `-${file.stats.removed}`));
@@ -2604,8 +2619,10 @@ function fileListSection(title, items, kind, mapFn) {
   const ul = el("ul", "file-list");
   for (const item of items) {
     const li = el("li");
-    li.appendChild(el("span", "path", item.path));
-    li.appendChild(fileSidesSuffix(item.path, kind));
+    appendFilePath(li, "path", item);
+    // Side-specific errors (e.g. case-only name clashes) link just that side.
+    const sideKind = kind === "err" && (item.side === "A" || item.side === "B") ? item.side.toLowerCase() : kind;
+    li.appendChild(fileSidesSuffix(item, sideKind));
     if (mapFn) {
       const extra = mapFn(item);
       if (extra) li.appendChild(el("span", "badge", extra));
