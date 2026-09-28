@@ -45,7 +45,7 @@
       p.className = "os-hint";
       p.textContent = /Android|iPhone|iPad|Mobile/i.test(ua)
         ? "Socha Diff is a Windows desktop app. Open this page on your Windows PC to install it."
-        : "Socha Diff installs on Windows 10/11 (x64). On this computer you can run the web version from source.";
+        : "Socha Diff is a Windows desktop app for Windows 10/11 (x64). Open this page on your Windows PC to install it.";
       fine.after(p);
     }
   }

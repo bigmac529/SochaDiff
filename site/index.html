@@ -167,7 +167,7 @@
           <article class="tip reveal">
             <p class="path-demo" aria-hidden="true"><span class="side-a">A:</span> src/app.js &harr; <span class="side-b">B:</span> src/app.js</p>
             <h3>Paired by relative path</h3>
-            <p>Every subfolder is scanned and files are matched by relative path. If either folder's disk ignores letter case (Windows, macOS, exFAT), Readme.md and README.md are paired; otherwise names must match exactly. Unmatched files are listed as only in A or only in B.</p>
+            <p>Every subfolder is scanned and files are matched by relative path. Windows folders ignore letter case, so Readme.md and README.md are paired; only when both folders are case-sensitive must names match exactly. Unmatched files are listed as only in A or only in B.</p>
           </article>
           <a class="tip tip-cta reveal" href="guide.html">
             <span class="tip-cta-kicker">Every control, explained</span>
@@ -296,7 +296,6 @@
             <li>Updates are automatic: every launch checks this site and installs a newer version before starting.</li>
             <li>Settings and logs live in <code>%LOCALAPPDATA%\SochaDiff</code> and survive updates.</li>
             <li>Uninstall from Settings &rarr; Apps &rarr; Installed apps &rarr; <em>Socha Diff</em>.</li>
-            <li>Mac or Linux? The same app runs in any browser from source: <code>npm install</code>, then <code>npm start</code>.</li>
           </ul>
         </div>
       </div>
