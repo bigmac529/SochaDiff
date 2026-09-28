@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Framework-dependent everywhere (build, Folder and ClickOnce publish): users install the
+         .NET 10 Desktop Runtime once as a prerequisite instead of downloading ~145 MB of runtime with
+         the app. If it is missing, the apphost (SochaDiff.exe) shows the standard ".NET is required"
+         dialog with a download link; setup.exe can also install it (see ClickOnce.pubxml). -->
+    <SelfContained>false</SelfContained>
+    <AssemblyName>SochaDiff</AssemblyName>
+    <RootNamespace>SochaDiff.Desktop</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>Socha Diff</Product>
+    <Company>Socha3</Company>
+    <!-- Version: <major>.<minor> from desktop/version.json, build number from the publish
+         (SochaBuildNumber = GitHub Actions run number; 0 for local builds). -->
+    <SochaVersionJson>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../version.json'))</SochaVersionJson>
+    <SochaVersionMajor>$([System.Text.RegularExpressions.Regex]::Match('$(SochaVersionJson)', '"major"\s*:\s*\d+').Value.Split(':')[1].Trim())</SochaVersionMajor>
+    <SochaVersionMinor>$([System.Text.RegularExpressions.Regex]::Match('$(SochaVersionJson)', '"minor"\s*:\s*\d+').Value.Split(':')[1].Trim())</SochaVersionMinor>
+    <SochaBuildNumber Condition="'$(SochaBuildNumber)' == ''">0</SochaBuildNumber>
+    <SochaApplicationVersion>$(SochaVersionMajor).$(SochaVersionMinor).$(SochaBuildNumber).0</SochaApplicationVersion>
+    <Version>$(SochaVersionMajor).$(SochaVersionMinor).$(SochaBuildNumber)</Version>
+    <FileVersion>$(SochaApplicationVersion)</FileVersion>
+    <AssemblyVersion>$(SochaApplicationVersion)</AssemblyVersion>
+    <!-- Lets the project compile on Linux/macOS (CI, the build box). Harmless on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Ship English resources only (drops localized satellite folders, e.g. from WebView2). -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Package IntelliSense XML (~0.8 MB) is useless at runtime; keep it out of the publish/ClickOnce payload. -->
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    <!-- Staged by desktop/scripts/prepare-bundle.ps1 (git-ignored). -->
+    <SochaBundleDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', 'bundle'))</SochaBundleDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!--
+    Bundled web app: app/server.js, app/lib, app/public, app/node_modules, bundle-info.json
+    (plus node/node.exe only for a portable build staged with prepare-bundle -IncludeNode;
+    normally Node.js is a user-installed prerequisite). As Content with CopyToOutputDirectory
+    they land beside SochaDiff.exe on build and are listed in the ClickOnce manifest on publish.
+  -->
+  <ItemGroup>
+    <Content Include="$(SochaBundleDir)**\*"
+             Link="%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             Visible="false" />
+  </ItemGroup>
+
+  <Target Name="SochaWarnMissingBundle" BeforeTargets="BeforeBuild"
+          Condition="!Exists('$(SochaBundleDir)app\server.js')">
+    <Warning Code="SOCHA001"
+             Text="The web app bundle is missing ($(SochaBundleDir)). Run desktop/scripts/prepare-bundle.ps1 before running the app (or set SOCHA_DESKTOP_APP_DIR); it will show a startup error until then." />
+  </Target>
+
+  <Target Name="SochaRequireBundleForPublish" BeforeTargets="PrepareForPublish"
+          Condition="!Exists('$(SochaBundleDir)app\server.js') Or !Exists('$(SochaBundleDir)app\node_modules\express\package.json')">
+    <Error Code="SOCHA002"
+           Text="Refusing to publish without the web app bundle ($(SochaBundleDir)). Run desktop/scripts/prepare-bundle.ps1 first." />
+  </Target>
+
+</Project>

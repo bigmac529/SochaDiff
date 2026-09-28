@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Package xmlns="http://schemas.microsoft.com/developer/2004/01/bootstrapper"
+         Name="DisplayName"
+         Culture="Culture">
+  <Strings>
+    <String Name="DisplayName">Microsoft Edge WebView2 Runtime (Evergreen)</String>
+    <String Name="Culture">en</String>
+    <String Name="GeneralFailure">A failure occurred while installing the Microsoft Edge WebView2 Runtime. Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and run setup again.</String>
+    <!-- Official Evergreen Bootstrapper link ("Get the Link" on https://developer.microsoft.com/microsoft-edge/webview2/). -->
+    <String Name="WebView2BootstrapperUrl">https://go.microsoft.com/fwlink/p/?LinkId=2124703</String>
+  </Strings>
+</Package>

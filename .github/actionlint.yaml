@@ -1,0 +1,5 @@
+self-hosted-runner:
+  # Custom label of the self-hosted runner `socha3-sochadiff` on the IIS server, used by the
+  # deploy job in publish-desktop.yml (runs-on: [self-hosted, Windows, X64, sochadiff]).
+  labels:
+    - sochadiff

@@ -1,3 +1,7 @@
 # EOL fixtures must keep their exact CRLF/LF bytes on every platform.
 sample/eol-a/** -text
 sample/eol-b/** -text
+# Selection-test fixtures: the tests expect LF, so keep them LF even with core.autocrlf=true
+# (windows-latest runners and most Windows clones would otherwise check them out as CRLF).
+sample/sel-a/** -text
+sample/sel-b/** -text

@@ -4,6 +4,9 @@
   "description": "Folder difference and mirroring tool.",
   "type": "commonjs",
   "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "prestart": "node scripts/free-port.js",
     "start": "node server.js --open",

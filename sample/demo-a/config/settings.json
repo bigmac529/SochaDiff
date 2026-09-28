@@ -1,0 +1,10 @@
+{
+  "name": "inventory-service",
+  "port": 8080,
+  "currency": "USD",
+  "lowStockThreshold": 5,
+  "features": {
+    "clearance": false,
+    "audit": false
+  }
+}
