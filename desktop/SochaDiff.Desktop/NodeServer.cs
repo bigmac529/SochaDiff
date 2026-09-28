@@ -8,11 +8,15 @@ using System.Text.Json;
 
 namespace SochaDiff.Desktop;
 
-/// <summary>Raised when the local server cannot be started; Message is user-facing.</summary>
-internal sealed class NodeStartException(string message, Exception? inner = null) : Exception(message, inner);
+/// <summary>Raised when the local server cannot be started; Message (and Title, if set) are user-facing.</summary>
+internal sealed class NodeStartException(string message, Exception? inner = null, string? title = null) : Exception(message, inner)
+{
+    public string Title { get; } = title ?? "Socha Diff could not start";
+}
 
 /// <summary>
-/// Runs `node app/server.js` (the user's Node.js, see NodeLocator) on a free 127.0.0.1 port, with no
+/// Runs `node server.js` from the web app folder (AppPaths.ResolveAppDir; normally app\ next to the exe)
+/// with the user's Node.js (see NodeLocator) on a free 127.0.0.1 port, with no
 /// console window, stdout/stderr appended to %LOCALAPPDATA%\SochaDiff\server.log,
 /// and the process held in a kill-on-close Job Object.
 /// </summary>
@@ -33,6 +37,9 @@ internal sealed class NodeServer : IDisposable
     public Uri BaseUri => new($"http://{Host}:{Port}/");
     public int? ProcessId => _process?.Id;
 
+    /// <summary>The web app folder of the current run (see AppPaths.ResolveAppDir); also node's working directory.</summary>
+    public string AppDir { get; private set; } = AppPaths.BundledAppDir;
+
     /// <summary>Fires (on a thread-pool thread) if node exits after startup without Stop/Dispose.</summary>
     public event Action<int>? UnexpectedExit;
 
@@ -41,14 +48,27 @@ internal sealed class NodeServer : IDisposable
         OpenLog();
         _job ??= new JobObject();
 
-        string serverJs = Path.Combine(AppPaths.AppDir, "server.js");
-        if (!File.Exists(serverJs))
-            throw new NodeStartException($"The Socha Diff web app files are missing:\n{serverJs}\n\nThe app files may be incomplete; reinstall Socha Diff (developers: run desktop/scripts/prepare-bundle.ps1).");
-
         Log($"host: SochaDiff {typeof(NodeServer).Assembly.GetName().Version} pid {Environment.ProcessId}; " +
-            $".NET {Environment.Version} ({System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}); app {AppPaths.AppDir}; data {AppPaths.DataDir}");
-        if (File.Exists(AppPaths.BundleInfo))
+            $".NET {Environment.Version} ({System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}); data {AppPaths.DataDir}");
+
+        // Re-resolved on every start, so Retry picks up a bundle staged or an npm install done meanwhile.
+        AppDirChoice appDir;
+        try
+        {
+            appDir = AppPaths.ResolveAppDir();
+        }
+        catch (NodeStartException ex)
+        {
+            Log("host: " + ex.Message.ReplaceLineEndings(" "));
+            throw;
+        }
+        AppDir = appDir.Path;
+        string serverJs = Path.Combine(AppDir, "server.js");
+        Log($"host: app folder {AppDir} ({appDir.Source})");
+        if (appDir.IsBundle && File.Exists(AppPaths.BundleInfo))
             Log("host: bundle " + File.ReadAllText(AppPaths.BundleInfo).ReplaceLineEndings(" "));
+        else if (!appDir.IsBundle)
+            Log("host: not the staged bundle: running the web app from that folder as-is (settings still go to the data folder)");
         var clickOnceVersion = Environment.GetEnvironmentVariable("ClickOnce_CurrentVersion");
         if (!string.IsNullOrEmpty(clickOnceVersion)) Log($"host: ClickOnce version {clickOnceVersion}");
 
@@ -105,7 +125,7 @@ internal sealed class NodeServer : IDisposable
     {
         var psi = new ProcessStartInfo(nodeExe)
         {
-            WorkingDirectory = AppPaths.AppDir,
+            WorkingDirectory = AppDir,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardInput = true,
@@ -219,6 +239,11 @@ internal sealed class NodeServer : IDisposable
             {
                 _recentOutput.Enqueue(line);
                 while (_recentOutput.Count > 50) _recentOutput.Dequeue();
+            }
+            else
+            {
+                // Visual Studio's Output window (Debug builds only; Debug.WriteLine is compiled out of Release).
+                Debug.WriteLine($"[SochaDiff] {line}");
             }
             try { _log?.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{stream}] {line}"); }
             catch (ObjectDisposedException) { }

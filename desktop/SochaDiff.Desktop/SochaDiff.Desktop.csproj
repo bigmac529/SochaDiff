@@ -57,10 +57,26 @@
              Visible="false" />
   </ItemGroup>
 
+  <!--
+    Debug builds only: record the repo root in the assembly (AssemblyMetadata "SochaRepoRoot"). When
+    app\server.js is missing next to the exe, AppPaths.ResolveAppDir (#if DEBUG) runs the web app
+    straight from the repo checkout, so F5 works without prepare-bundle (the repo needs `npm install`).
+    Release builds carry no path and never look outside the exe folder (except SOCHA_APP_DIR).
+  -->
+  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
+    <AssemblyMetadata Include="SochaRepoRoot" Value="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '..', '..'))" />
+  </ItemGroup>
+
   <Target Name="SochaWarnMissingBundle" BeforeTargets="BeforeBuild"
-          Condition="!Exists('$(SochaBundleDir)app\server.js')">
+          Condition="!Exists('$(SochaBundleDir)app\server.js') And '$(Configuration)' != 'Debug'">
     <Warning Code="SOCHA001"
-             Text="The web app bundle is missing ($(SochaBundleDir)). Run desktop/scripts/prepare-bundle.ps1 before running the app (or set SOCHA_DESKTOP_APP_DIR); it will show a startup error until then." />
+             Text="The web app bundle is missing ($(SochaBundleDir)). Run desktop/scripts/prepare-bundle.ps1 before running a $(Configuration) build (or set SOCHA_APP_DIR); it will show a startup error until then. Debug builds run the web app from the repo checkout instead." />
+  </Target>
+
+  <Target Name="SochaNoteMissingBundleDebug" BeforeTargets="BeforeBuild"
+          Condition="!Exists('$(SochaBundleDir)app\server.js') And '$(Configuration)' == 'Debug'">
+    <Message Importance="high"
+             Text="Socha Diff: no staged bundle; this Debug build runs the web app from the repo root (run `npm install` there once). prepare-bundle is only needed for Release/publish." />
   </Target>
 
   <Target Name="SochaRequireBundleForPublish" BeforeTargets="PrepareForPublish"
