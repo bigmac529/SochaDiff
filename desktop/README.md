@@ -352,9 +352,11 @@ The workflow lints clean with actionlint 1.7.12 (`.github/actionlint.yaml` decla
 The IIS site `SochaDiff` (content root `C:\WebApps\SochaDiff`) serves
 https://sochadiff.socha3.com/ behind Cloudflare. The runner `socha3-sochadiff` runs on that
 server as the non-admin account `.\gha-sochadiff`, which has Modify on `C:\WebApps\SochaDiff`
-and `C:\WebApps\_deploy-backups`. The job uses `runs-on: [self-hosted, Windows, X64, sochadiff]`
-and needs no deploy secrets and no inbound port. It runs only for a push to `main` or a manual
-run from `main` (with `deploy` checked).
+and `C:\WebApps\_deploy-backups\SochaDiff`. The job uses `runs-on: [self-hosted, Windows, X64, sochadiff]`
+and `environment: production`, and needs no deploy secrets and no inbound port. It runs only for
+a push to `main` or a manual run from `main` (with `deploy` checked); the `production`
+environment independently accepts deployments from `main` only (custom deployment branch
+policy `main`). It has no required reviewers, so every merge to `main` deploys automatically.
 
 Steps: checkout of `desktop/scripts`, download of the artifact built on `windows-latest` into
 `RUNNER_TEMP` (emptied for every job), then `deploy-site.ps1` in Windows PowerShell 5.1:
@@ -365,8 +367,11 @@ Steps: checkout of `desktop/scripts`, download of the artifact built on `windows
    `version.json` and https://sochadiff.socha3.com/version.json) unless the `force` input is set.
    A re-run of an already deployed run therefore fails; use a new run, or `force`.
 3. **Backup**: copies the current content root to
-   `C:\WebApps\_deploy-backups\<yyyyMMdd-HHmmss>-<live version>` and keeps the newest 5 (only
-   folders named like that are pruned). Restore = copy a backup back with robocopy.
+   `C:\WebApps\_deploy-backups\SochaDiff\<yyyyMMdd-HHmmss>-<live version>` (the script creates
+   the `SochaDiff` folder if it is missing) and keeps the newest 5. Pruning only touches direct
+   subfolders of `C:\WebApps\_deploy-backups\SochaDiff` named exactly like the script's own
+   backups (`yyyyMMdd-HHmmss-<version>` or `yyyyMMdd-HHmmss-unknown`), never junctions, and
+   nothing outside that folder. Restore = copy a backup back with robocopy.
 4. **Copy without deletes** (no `/MIR`, no `/PURGE`): phase 1 robocopies every folder and every
    root file except `SochaDiff.application`, `version.json` and `index.html` (so `web.config`
    and `setup.exe` are included); phase 2 swaps in `SochaDiff.application`, then `version.json`
@@ -383,9 +388,30 @@ Steps: checkout of `desktop/scripts`, download of the artifact built on `windows
 Prune very old `Application Files\SochaDiff_*` folders by hand now and then (about 6 MB each;
 backups copy the whole root, so they grow with them).
 
-Keep the runner attached to this private repository only: it runs whatever workflow code it is
-given and can write to the site. Web Deploy (msdeploy) was the earlier plan and is no longer
-used; it is in the git history if ever needed.
+Web Deploy (msdeploy) was the earlier plan and is no longer used; it is in the git history if
+ever needed.
+
+### Public repository and the self-hosted runner
+
+This repository is **public**. The self-hosted runner runs whatever workflow code it is given
+and can write to the live site, so it is locked down on both sides:
+
+- **GitHub**: runs of workflows from outside contributors' pull requests need a maintainer's
+  approval (Settings -> Actions -> General -> "Require approval for all external contributors",
+  API value `all_external_contributors`). The `production` environment accepts deployments from
+  `main` only, and `main` is protected by a ruleset (changes only through pull requests).
+- **Server**: the runner `socha3-sochadiff` is registered to this repository only (not to an
+  organization or other repositories), runs as the non-admin, logon-restricted account
+  `.\gha-sochadiff` (Modify only on `C:\WebApps\SochaDiff` and
+  `C:\WebApps\_deploy-backups\SochaDiff`), and a job-completed hook cleans its workspace after
+  every job.
+
+> **Warning for maintainers:** never approve a workflow run on a fork pull request without
+> reading every change to `.github/` (and any script a workflow calls) in that PR first. A fork
+> can modify or add a workflow whose job uses `runs-on: [self-hosted, ...]` / the `sochadiff`
+> label; once approved, that job runs on the web server as `.\gha-sochadiff`, with write access
+> to the live site, regardless of the `if:` conditions in this repository's own workflow. When
+> in doubt, do not approve: close the PR, or copy the wanted change into a branch of your own.
 
 ### Secrets and variables (Settings -> Secrets and variables -> Actions)
 
@@ -395,7 +421,10 @@ used; it is in the git history if ever needed.
 | `SIGNING_PFX_PASSWORD` | secret | The PFX password |
 | `SIGNING_CERT_THUMBPRINT` | variable (optional) | Expected signing thumbprint; default `CF4137053F371F439BD420B02A51192C5DED6075` in the workflow. A mismatch warns |
 
-No deploy secrets: the self-hosted runner writes to the content root directly.
+No deploy secrets: the self-hosted runner writes to the content root directly. The signing
+secrets stay **repository** secrets, not `production` environment secrets: they are used by the
+`build` job, which runs on `windows-latest` without an environment (environment secrets are only
+available to jobs that reference the environment).
 
 ### Server setup (Sissy Admin; in place)
 
@@ -404,13 +433,16 @@ No deploy secrets: the self-hosted runner writes to the content root directly.
   `InstallUrl` is `https://sochadiff.socha3.com/`, so it must be served at the site root;
   `site/web.config` (deployed with the site) supplies the ClickOnce MIME types and cache rules.
 - Self-hosted runner `socha3-sochadiff` (labels `self-hosted, Windows, X64, sochadiff`) as a
-  service running as `.\gha-sochadiff` (not admin) with Modify on `C:\WebApps\SochaDiff` and
-  `C:\WebApps\_deploy-backups`, outbound HTTPS to GitHub. Git on the server is optional
-  (`actions/checkout` falls back to downloading the files).
+  service running as `.\gha-sochadiff` (not admin, logon-restricted) with Modify on
+  `C:\WebApps\SochaDiff` and `C:\WebApps\_deploy-backups\SochaDiff`, registered to this
+  repository only, with a job-completed hook that cleans the runner workspace; outbound HTTPS to
+  GitHub. Git on the server is optional (`actions/checkout` falls back to downloading the files).
+- Backups: `C:\WebApps\_deploy-backups\SochaDiff` (per-site folder; older backups made before
+  this folder existed sit directly in `C:\WebApps\_deploy-backups` until moved by hand).
 - Cloudflare: the default cache key includes the query string, so the check bypasses the cache.
   If the zone ignores query strings or caches `SochaDiff.application`/`version.json`, clients may
   see an old manifest for a while; `web.config` sends no-cache for those files.
 
 Manual deploy from a Windows PC with access to the share:
 `pwsh desktop/scripts/deploy-site.ps1 -Source desktop/out/site -TargetPath \\server\c$\WebApps\SochaDiff -SkipBackup -Verify`
-(add `-BackupRoot \\server\c$\WebApps\_deploy-backups` instead of `-SkipBackup` to back up first).
+(add `-BackupRoot \\server\c$\WebApps\_deploy-backups\SochaDiff` instead of `-SkipBackup` to back up first).

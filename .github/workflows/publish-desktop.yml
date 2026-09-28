@@ -10,11 +10,16 @@
 #             expected thumbprint in vars.SIGNING_CERT_THUMBPRINT or the default below). A build
 #             with the secrets that does not come out signed fails.
 #   deploy  = self-hosted runner `socha3-sochadiff` on the IIS server (labels self-hosted, Windows,
-#             X64, sochadiff): deploy-site.ps1 backs up C:\WebApps\SochaDiff to
-#             C:\WebApps\_deploy-backups, refuses non-newer versions (input `force` overrides),
-#             robocopies without deleting (SochaDiff.application, version.json, index.html last),
-#             then checks the live site through Cloudflare. No deploy secrets.
+#             X64, sochadiff), GitHub environment `production` (deployments allowed from main
+#             only, no required reviewers): deploy-site.ps1 backs up C:\WebApps\SochaDiff to
+#             C:\WebApps\_deploy-backups\SochaDiff, refuses non-newer versions (input `force`
+#             overrides), robocopies without deleting (SochaDiff.application, version.json,
+#             index.html last), then checks the live site through Cloudflare. No deploy secrets.
 #             (Replaced the earlier Web Deploy/msdeploy job; see git history if it is ever needed.)
+#   public  = this repository is PUBLIC. Runs of workflows from outside contributors' fork PRs
+#             need maintainer approval (all_external_contributors). NEVER approve a fork PR's run
+#             without reading every change to .github/ first: a fork can edit or add a workflow
+#             whose job targets the self-hosted runner's labels and runs code on the web server.
 # Setup, secrets and server details: desktop/README.md, "Continuous publishing".
 name: Publish desktop app and site
 
@@ -161,9 +166,16 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy))
-    # Runner `socha3-sochadiff` on the IIS server, service account .\gha-sochadiff (not admin;
-    # Modify on C:\WebApps\SochaDiff and C:\WebApps\_deploy-backups). Keep it attached to this
-    # private repository only.
+    # The `production` environment only accepts deployments from main (custom branch policy), a
+    # second gate besides the `if:` above; it has no required reviewers, so merges deploy.
+    environment:
+      name: production
+      url: https://sochadiff.socha3.com
+    # Runner `socha3-sochadiff` on the IIS server: registered to this repository only, service
+    # account .\gha-sochadiff (not admin, logon-restricted; Modify on C:\WebApps\SochaDiff and
+    # C:\WebApps\_deploy-backups\SochaDiff), job-completed hook cleans the workspace. The repo is
+    # public: never approve a fork PR's workflow run without reading every workflow change, since a
+    # fork's workflow can target these labels.
     runs-on: [self-hosted, Windows, X64, sochadiff]
     timeout-minutes: 30
     steps:
@@ -190,6 +202,6 @@ jobs:
             -Source (Join-Path $env:RUNNER_TEMP 'site-out') `
             -ExpectedVersion $env:VERSION `
             -TargetPath 'C:\WebApps\SochaDiff' `
-            -BackupRoot 'C:\WebApps\_deploy-backups' -KeepBackups 5 `
+            -BackupRoot 'C:\WebApps\_deploy-backups\SochaDiff' -KeepBackups 5 `
             -SiteUrl 'https://sochadiff.socha3.com/' `
             -Force:($env:FORCE -eq 'true') -Verify
