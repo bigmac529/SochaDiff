@@ -166,36 +166,97 @@ async function runScenario(name, fn) {
   }
 }
 
-// ── pixel sampling (1x1 PNG decode; no dependencies) ─────────────────────
+// ── pixel sampling (PNG decode; no dependencies) ─────────────────────────
 const zlib = require("zlib");
 
-/** RGB of a 1x1 PNG screenshot. With a single pixel every PNG filter reduces to "raw". */
-function decodeOnePixelPng(buf) {
+/** Decode an 8-bit, non-interlaced RGB/RGBA PNG (what Playwright screenshots produce). */
+function decodePng(buf) {
   let offset = 8;
+  let width = 0;
+  let height = 0;
   let colorType = 2;
   const idat = [];
   while (offset < buf.length) {
     const len = buf.readUInt32BE(offset);
     const type = buf.toString("ascii", offset + 4, offset + 8);
     const data = buf.subarray(offset + 8, offset + 8 + len);
-    if (type === "IHDR") colorType = data[9];
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      if (data[8] !== 8 || data[12] !== 0) throw new Error("unsupported PNG (bit depth / interlace)");
+      colorType = data[9];
+    }
     if (type === "IDAT") idat.push(data);
     offset += 12 + len;
   }
+  const bpp = colorType === 6 ? 4 : colorType === 2 ? 3 : 0;
+  if (!bpp) throw new Error(`unsupported PNG color type ${colorType}`);
   const raw = zlib.inflateSync(Buffer.concat(idat));
-  // raw[0] is the filter byte; with no neighbors every filter is identity.
-  return { r: raw[1], g: raw[2], b: raw[3], colorType };
-}
-
-async function pixelAt(page, x, y) {
-  const buf = await page.screenshot({ clip: { x: Math.round(x), y: Math.round(y), width: 1, height: 1 } });
-  return decodeOnePixelPng(buf);
+  const stride = width * bpp;
+  const out = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const line = y * (stride + 1) + 1;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? out[y * stride + x - bpp] : 0;
+      const b = y ? out[(y - 1) * stride + x] : 0;
+      const c = x >= bpp && y ? out[(y - 1) * stride + x - bpp] : 0;
+      let v = raw[line + x];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      out[y * stride + x] = v & 255;
+    }
+  }
+  const pixels = [];
+  for (let i = 0; i < out.length; i += bpp) pixels.push({ r: out[i], g: out[i + 1], b: out[i + 2] });
+  return { width, height, colorType, pixels };
 }
 
 const TINT = { r: 0x31, g: 0x6a, b: 0xc5 };
 function isTint(px) {
   return Math.abs(px.r - TINT.r) <= 12 && Math.abs(px.g - TINT.g) <= 12 && Math.abs(px.b - TINT.b) <= 12;
 }
+
+/**
+ * Share of the newline cell's pixels that carry the selection tint.
+ *
+ * Samples the whole cell box instead of one pixel: with whitespace chars on the
+ * cell also shows the gray EOL glyph, and its antialiased edges land on
+ * different pixels per platform (Windows ClearType/DirectWrite subpixel AA
+ * tints single channels next to the stem; fractional device scale shifts it
+ * too). A single fixed pixel beside the glyph is therefore not a stable probe.
+ * An unpainted cell has ~0% tint, a painted one ~100% (no glyph) or ~55-65%
+ * (glyph drawn over the tint).
+ */
+async function eolTintShare(page, row) {
+  const x0 = Math.ceil(row.eolL);
+  const x1 = Math.floor(row.eolR);
+  const y0 = Math.ceil(row.eolT);
+  const y1 = Math.floor(row.eolB);
+  if (!(x1 > x0 && y1 > y0)) return { share: 0, detail: `empty cell box ${JSON.stringify([row.eolL, row.eolR, row.eolT, row.eolB])}` };
+  const img = decodePng(await page.screenshot({ clip: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } }));
+  const tinted = img.pixels.filter(isTint).length;
+  const counts = new Map();
+  for (const p of img.pixels) {
+    const key = `${p.r},${p.g},${p.b}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const common = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => `rgb(${k})x${n}`);
+  const share = tinted / img.pixels.length;
+  return { share, detail: `tint ${tinted}/${img.pixels.length} (${Math.round(share * 100)}%), ${img.width}x${img.height}px, most common ${common.join(" ")}` };
+}
+
+// Painted: the tint must cover a clear majority of the glyph-free area. Unpainted: none.
+const PAINTED_MIN_SHARE = 0.4;
+const UNPAINTED_MAX_SHARE = 0.05;
 
 const RED = /rgba\(255, 120, 120/;
 const GREEN = /rgba\(112, 224, 145/;
@@ -287,6 +348,8 @@ function paneRows(page, file, side) {
           eolL: eb ? eb.left : null,
           eolR: eb ? eb.right : null,
           eolW: eb ? eb.width : 0,
+          eolT: eb ? eb.top : null,
+          eolB: eb ? eb.bottom : null,
           gutterX: (num.left + num.right) / 2,
         };
       });
@@ -385,16 +448,16 @@ async function newlineSelectionScenarios(page, baseUrl, port) {
       assert(`[${label}] drag to end of text copies no newline`, copied === "line 8", JSON.stringify(copied));
       let eols = await selectedEolRows(page, BIG, "left");
       assert(`[${label}] newline cell not selected`, eols.length === 0, JSON.stringify(eols));
-      let px = await pixelAt(page, l8.eolL + 2, l8.top + 4);
-      assert(`[${label}] unselected newline cell is not painted`, !isTint(px), JSON.stringify(px));
+      let tint = await eolTintShare(page, l8);
+      assert(`[${label}] unselected newline cell is not painted`, tint.share <= UNPAINTED_MAX_SHARE, tint.detail);
 
       await drag(page, { x: l8.textStart, y: l8.mid }, { x: l8.eolR + 30, y: l8.mid });
       copied = await copyText(page);
       assert(`[${label}] drag past the newline copies it`, copied === "line 8\n", JSON.stringify(copied));
       eols = await selectedEolRows(page, BIG, "left");
       assert(`[${label}] newline cell selected`, eols.length === 1 && eols[0] === l8.i, JSON.stringify(eols));
-      px = await pixelAt(page, l8.eolL + 2, l8.top + 4);
-      assert(`[${label}] selected newline cell paints with the selection tint`, isTint(px), JSON.stringify(px));
+      tint = await eolTintShare(page, l8);
+      assert(`[${label}] selected newline cell paints with the selection tint`, tint.share >= PAINTED_MIN_SHARE, tint.detail);
 
       await drag(page, { x: l8.textStart, y: l8.mid }, { x: l8.eolL + l8.eolW * 0.8, y: l8.mid });
       copied = await copyText(page);
@@ -408,8 +471,8 @@ async function newlineSelectionScenarios(page, baseUrl, port) {
       assert(`[${label}] 3 lines, last without newline`, copied === "line 8\nline 9\nline 10 CHANGED A", JSON.stringify(copied));
       let eols = await selectedEolRows(page, BIG, "left");
       assert(`[${label}] only interior newlines selected`, JSON.stringify(eols) === JSON.stringify([l8.i, l9.i]), JSON.stringify(eols));
-      const px9 = await pixelAt(page, l9.eolL + 2, l9.top + 4);
-      assert(`[${label}] interior newline paints`, isTint(px9), JSON.stringify(px9));
+      const tint9 = await eolTintShare(page, l9);
+      assert(`[${label}] interior newline paints`, tint9.share >= PAINTED_MIN_SHARE, tint9.detail);
 
       await drag(page, { x: l8.textStart, y: l8.mid }, { x: l10.eolR + 40, y: l10.mid });
       copied = await copyText(page);
@@ -549,8 +612,8 @@ async function newlineSelectionScenarios(page, baseUrl, port) {
     await drag(page, { x: left[1].textStart, y: left[1].mid }, { x: left[2].eolR + 30, y: left[2].mid });
     copied = await copyText(page);
     assert("blank line with its newline copies \\r\\n", copied === "second line\r\n\r\n", JSON.stringify(copied));
-    const px = await pixelAt(page, left[2].eolL + 2, left[2].top + 4);
-    assert("blank line newline cell paints", isTint(px), JSON.stringify(px));
+    const tint = await eolTintShare(page, left[2]);
+    assert("blank line newline cell paints", tint.share >= PAINTED_MIN_SHARE, tint.detail);
     const marked = await page.evaluate(() => document.querySelectorAll(".left-pane .text-content.ws-line-selected.eol-only").length);
     assert("blank line still carries ws-line-selected", marked === 1, String(marked));
 
