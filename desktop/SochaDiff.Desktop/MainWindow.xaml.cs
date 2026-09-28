@@ -67,7 +67,7 @@ public partial class MainWindow : Window
         }
         catch (NodeStartException ex)
         {
-            ShowError("Socha Diff could not start", ex.Message, canRetry: true);
+            ShowError(ex.Title, ex.Message, canRetry: true);
             return;
         }
         catch (WebView2RuntimeNotFoundException)

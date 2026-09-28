@@ -625,7 +625,7 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
 
 > **Update 2026-09-27 (see §14.1): .NET 10, framework-dependent, Node.js is a prerequisite,
 > download site in `site/`, CI publishing.** The bullets below describe the first version; where
-> they conflict, §14.1 wins.
+> they conflict, §14.1 wins. §14.2: Debug builds run the web app from the repo (no prepare-bundle needed for F5).
 
 - `desktop/SochaDiff.Desktop/`: a .NET 8 WPF app (`net8.0-windows`, win-x64,
   `Microsoft.Web.WebView2`) with `desktop/SochaDiff.sln`. It is a full-window WebView2
@@ -725,3 +725,23 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
   job summary.
 - Still open: the workflow only runs once merged to main (first real deploy + install/update test
   of a CI-published build on Windows); pruning old `Application Files` folders is manual.
+
+## 14.2 Debug runs from the repo; `SOCHA_APP_DIR` (2026-09-27)
+
+- F5 in Visual Studio used to fail with "The Socha Diff web app files are missing ... app\server.js"
+  unless prepare-bundle had been run. Now `AppPaths.ResolveAppDir` (called on every start/Retry)
+  picks: `SOCHA_APP_DIR` (alias `SOCHA_DESKTOP_APP_DIR`; developer-only, Debug and Release; a
+  folder without server.js is an error) -> `app\` next to the exe (staged bundle; the only source in
+  Release/ClickOnce/CI) -> **Debug only** (`#if DEBUG`) the repo root: AssemblyMetadata
+  `SochaRepoRoot` baked by the csproj for `Configuration=Debug`, else walk up from the exe to a
+  folder with `server.js` + `package.json` + `public/`. Node's working directory is that folder.
+- Non-bundle folders must have every `package.json` dependency in `node_modules`; otherwise the
+  panel "The web app's npm packages are not installed" says to run `npm install` there (npm is
+  never run automatically). The Release missing-files message names prepare-bundle.ps1 and the
+  Debug fallback. `NodeStartException` has an optional `Title` for the panel.
+- Logged as `host: app folder <path> (<source>)` in server.log; in Debug, host lines also go to
+  `Debug.WriteLine` (VS Output). `SOCHA001` now warns only for non-Debug builds; Debug prints a
+  note. No MSBuild prepare-bundle target was added (would slow builds / need network).
+- A staged bundle still wins in Debug (stale copy in `bin\Debug\...\app\` included); delete both
+  or set `SOCHA_APP_DIR` to use the repo. Publish profiles and publish-site.ps1 use Release, so the
+  ClickOnce payload and CI are unchanged (Release dll contains no repo path).

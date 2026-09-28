@@ -37,7 +37,7 @@ desktop/
     NodeServer.cs                  port pick, node launch, logging, health polling
     NodeLocator.cs                 finds the user's Node.js (>= 20)
     JobObject.cs                   KILL_ON_JOB_CLOSE job for node.exe
-    AppPaths.cs                    %LOCALAPPDATA%\SochaDiff paths, dev overrides
+    AppPaths.cs                    %LOCALAPPDATA%\SochaDiff paths, web app folder choice (bundle / Debug repo fallback / SOCHA_APP_DIR)
     Properties/PublishProfiles/
       ClickOnce.pubxml             https://sochadiff.socha3.com/, framework-dependent
       Folder.pubxml                plain framework-dependent folder, for local testing
@@ -46,6 +46,9 @@ desktop/
 ```
 
 ## Prepare the bundle
+
+Needed for Release builds and every publish (Folder, ClickOnce, CI). Debug builds (F5) don't need
+it; see [Debugging locally](#debugging-locally).
 
 `node_modules` (and `node.exe`, for portable builds) are never committed. Stage the web app
 once, and again after changing `server.js`, `lib/`, `public/` or dependencies:
@@ -70,8 +73,8 @@ It writes `desktop/bundle/`:
 machine. The app's own check is `NodeLocator.MinimumMajor` (keep them in sync).
 
 The csproj includes everything under `bundle/` as `Content` (copied to the output and listed
-in the ClickOnce manifest). Building without `bundle/app` only warns (`SOCHA001`); publishing
-without it fails (`SOCHA002`).
+in the ClickOnce manifest). A Release build without `bundle/app` warns (`SOCHA001`), a Debug build
+only prints a note (it runs from the repo instead), and publishing without it fails (`SOCHA002`).
 
 ## Build and run
 
@@ -85,11 +88,44 @@ Or open `desktop/SochaDiff.sln` in Visual Studio and press F5. The project sets
 `EnableWindowsTargeting=true`, so `dotnet build` also works on Linux/macOS as a
 compile check (the app itself only runs on Windows). It needs the .NET 10 SDK.
 
-Dev overrides (environment variables read by the host):
+## Debugging locally
 
-- `SOCHA_DESKTOP_APP_DIR`: run a different web app folder, e.g. the repo root, to
-  test `public/` edits without re-running prepare-bundle. That folder needs its own
-  `node_modules`.
+F5 (or `dotnet run`) in **Debug** works straight from a checkout, without prepare-bundle:
+
+1. Once per checkout, and again after dependency changes: `npm install` at the repo root.
+2. Open `desktop/SochaDiff.sln`, keep the **Debug** configuration, press F5.
+
+How the host picks the web app folder (`AppPaths.ResolveAppDir`, re-checked on every start and
+on **Retry**):
+
+1. `SOCHA_APP_DIR` (older name `SOCHA_DESKTOP_APP_DIR`), in Debug **and** Release. Developer-only:
+   runs any web app folder (server.js + its own `node_modules`). A folder without `server.js`
+   is an error, never a silent fallback.
+2. `app\` next to `SochaDiff.exe`: the bundle staged by prepare-bundle. The only source in
+   Release, ClickOnce and CI builds.
+3. **Debug builds only** (`#if DEBUG`): the repo root. Debug builds record it at build time
+   (AssemblyMetadata `SochaRepoRoot` = `desktop/SochaDiff.Desktop/../..`); if that folder is gone,
+   the host walks up from the exe to the first folder with `server.js`, `package.json` and
+   `public\`. Node runs `server.js` there with that folder as its working directory, so edits to
+   `public/`, `lib/` and `server.js` show up after a restart (or **Retry**) with no staging step.
+   Release builds carry no repo path and never look outside the exe folder.
+
+If the repo's npm packages are missing, the app shows **"The web app's npm packages are not
+installed"** with the folder and `npm install` to run (it does not run npm itself, so Debug never
+needs the network). Nothing found at all shows the missing-files panel, which names both
+prepare-bundle.ps1 and the Debug fallback.
+
+The chosen folder is the `host: app folder ...` line in `%LOCALAPPDATA%\SochaDiff\server.log`
+(e.g. `(Debug fallback: repo root recorded at build time)`); in Debug, host log lines also go to
+Visual Studio's **Output** window (Debug pane, prefixed `[SochaDiff]`). Settings and state still
+go to `%LOCALAPPDATA%\SochaDiff`, not the repo folder.
+
+Note: a staged bundle wins over the repo. If you ran prepare-bundle once, Debug keeps using that
+copy (it is copied to `bin\Debug\...\app\` on build) until you re-run it, delete `desktop/bundle/`
+**and** `bin\Debug\...\app\`, or set `SOCHA_APP_DIR` to the repo root.
+
+Other dev overrides (environment variables read by the host):
+
 - `SOCHA_NODE` (or the older `SOCHA_DESKTOP_NODE`): use a specific `node.exe`.
 - `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`: standard
   WebView2 variable, handy for driving the UI over CDP in tests.
@@ -111,7 +147,7 @@ Dev overrides (environment variables read by the host):
   this application" dialog with a download link (no in-app check is possible at that point).
   The host logs the runtime version it runs on.
 - **Server**: picks a free port on `127.0.0.1` (bind to port 0, read it, release it),
-  then starts `node app\server.js` with `PORT=<port>`, `SOCHA_HOST=127.0.0.1`,
+  then starts `node server.js` in the chosen app folder (normally `app\`) with `PORT=<port>`, `SOCHA_HOST=127.0.0.1`,
   `SOCHA_NO_OPEN=1` and `SOCHA_DATA_DIR=%LOCALAPPDATA%\SochaDiff`, without a console
   window. `NODE_OPTIONS` and `SOCHA_OPEN_BROWSER` are removed from its environment.
   If node exits with `EADDRINUSE` (another process took the port in between), it retries
