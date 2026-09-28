@@ -281,6 +281,8 @@ kbd {
 .ref-table td { padding: 9px 12px; border-bottom: 1px solid rgba(255, 255, 255, .05); color: var(--muted); vertical-align: top; }
 .ref-table td:first-child { color: var(--text); white-space: nowrap; }
 .ref-table .path-demo { display: inline-block; padding: 2px 8px; white-space: nowrap; }
+.bullets .path-demo { display: inline-block; padding: 0 8px; white-space: nowrap; }
+.path-demo em { color: var(--muted); }
 .guide-back { display: flex; flex-wrap: wrap; gap: 12px; margin: 22px 0 0 !important; }
 .nav a[aria-current="page"] { color: var(--text); background: rgba(99, 102, 241, .16); }
 
