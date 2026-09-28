@@ -14,6 +14,7 @@ const {
   setIgnoreWhitespace,
   getIgnoreWhitespace,
   DEFAULT_IGNORE_WHITESPACE,
+  pathKey,
 } = require("./lib/compare");
 
 const app = express();
@@ -38,7 +39,11 @@ function normalizeFolderPath(value) {
 function resolveFileTarget(folder, relPath) {
   const resolvedFolder = path.resolve(folder);
   const target = path.resolve(resolvedFolder, relPath);
-  if (target !== resolvedFolder && !target.startsWith(resolvedFolder + path.sep)) {
+  // Containment follows the platform case rule (case-insensitive on Windows).
+  const folderKey = pathKey(resolvedFolder);
+  const targetKey = pathKey(target);
+  const prefix = folderKey.endsWith(path.sep) ? folderKey : folderKey + path.sep;
+  if (targetKey !== folderKey && !targetKey.startsWith(prefix)) {
     return { error: "Invalid file path." };
   }
   try {

@@ -502,6 +502,39 @@ slice, then expanded after each behavior was manually checked:
 - Large results are intentionally NOT persisted across nav (see 11.7). Small ones are.
 - `identicalCount` is retained for back-compat but `identical[]` is the list the UI uses.
 
+## 11.10 Path case rule (Windows case-insensitive, *nix exact)
+
+- `lib/path-case.js`: `CASE_INSENSITIVE_PATHS` = `process.platform === "win32"`, overridden by
+  `SOCHA_PATH_CASE=insensitive|sensitive` (read once at load; invalid values warn and use the
+  platform default). `pathKey(rel)` folds case with simple 1:1 uppercase mappings (NTFS-like, so
+  `ß` is not `SS`) in insensitive mode and is the identity otherwise. macOS follows *nix even
+  though its volumes are usually case-insensitive; users can opt in with the env var.
+- `compareFolders`: `walkDir` keys stay the real on-disk relative paths (hashes unchanged, so a
+  case-only rename still counts as "folder changed" for the Match safety check). `indexByKey`
+  pairs A/B by `pathKey`. A pair whose names differ carries `pathA`/`pathB` (`path` = A's name)
+  in every category; the client shows `B: <name>` (`.path-case-alt`) and each A/B link opens its
+  own side's name. Result also has `pathCase` and `caseConflicts[]` (+ `summary.caseConflicts`).
+- Case clashes (two files in ONE folder with the same key, e.g. from a *nix tree or a
+  case-sensitive NTFS dir): the key is skipped on both sides (in no category, never synced);
+  each affected file gets an `errors[]` entry with `side` ("A"/"B"); the Errors list links only
+  that side.
+- `syncFromComparison`: a case-differing pair is overwritten in place under the TARGET's
+  existing name (content from source, target casing kept, like a Windows copy and consistent
+  with identical/whitespace-only pairs, which are never touched). New files go into existing
+  target folders by their on-disk casing (`resolveTargetCase`). A target-only file is never
+  deleted when its key matches a written file, or (any mode) when it is a case-only variant of
+  a written file that the filesystem aliased (`isExactlyListed`) or that has the same
+  dev/inode; such skips are reported as errors. On a case-sensitive filesystem these guards
+  never fire, so *nix behavior is unchanged (including hard links).
+- Excluded folder names stay case-insensitive on every platform (settings are stored
+  lowercased; exclusion applies to both sides equally, so it can't mis-pair or lose data).
+- `resolveFileTarget` containment compares `pathKey`s and handles a drive-root folder.
+- Test: `npm run test:pathcase` (`tests/path-case.js`): mode resolution, lib checks in one child
+  process per mode, HTTP compare/sync per mode, and a Playwright UI check. On a case-insensitive
+  temp filesystem it runs against real aliasing and skips the fixtures that need case variants
+  in one folder. Verified on Linux (case-sensitive) and on a case-insensitive exFAT (FUSE)
+  volume; not yet on Windows.
+
 ---
 
 # 13. Conversation decisions and preferences (authoritative)
