@@ -1,3 +1,4 @@
+// LEGACY: the site now uses record-scenes.js + encode-demos.sh (animated WebP/GIF, no video).
 // Re-records the download page demo (site/assets/demo.*) from a REAL Socha Diff session.
 // Linux only: needs Xvfb, xdotool, ffmpeg and Playwright Chromium (npx playwright install chromium).
 //

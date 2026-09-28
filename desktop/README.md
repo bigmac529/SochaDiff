@@ -27,7 +27,9 @@ desktop/
   scripts/prepare-bundle.sh        same for Linux/macOS/Git Bash (CI, compile checks)
   scripts/publish-site.ps1         prepare-bundle + ClickOnce publish + site assembly -> desktop/out/site/
   scripts/deploy-site.ps1          deploys desktop/out/site/ to the IIS root (backup, no-delete copy, verify)
-  scripts/record-demo.js           re-records the site's demo video/GIF from a real session (Linux)
+  scripts/record-scenes.js         records the site's animated demos (home + guide) from real sessions (Linux)
+  scripts/encode-demos.sh          encodes those captures to site/assets/*.webp + GIF fallbacks
+  scripts/record-demo.js           legacy: the old demo video (site no longer uses it)
   bundle/                          git-ignored staging folder (created by the scripts)
   out/                             git-ignored publish-site output
   SochaDiff.Desktop/
@@ -302,9 +304,26 @@ shows the `UNSIGNED-NOTICE` block (publish-site.ps1 removes it when it signs).
 Static files only; no ASP.NET or URL Rewrite needed. It maps `.application`
 (`application/x-ms-application`), `.manifest` (`application/x-ms-manifest`), `.deploy` and
 `.exe` (`application/octet-stream`), `.gif`/`.webp`/`.webm`/`.mp4`/`.svg`/`.json`; turns off
-caching for `SochaDiff.application`, `setup.exe`, `version.json` and `index.html`; caches
+caching for `SochaDiff.application`, `setup.exe`, `version.json`, `index.html` and `guide.html`; caches
 `Application Files/` for a year (version folders never change); and un-hides the `bin` segment /
 allows double escaping so any node_modules path in `Application Files` is served.
+
+### Site demos (`record-scenes.js`, `encode-demos.sh`)
+
+The home page demo (`site/assets/home-demo.webp`, `.gif`, `-poster.webp`) and the guide clips
+(`site/assets/guide-<scene>.webp` + `.gif`) are recorded from real sessions on Linux (Xvfb,
+xdotool, ffmpeg with libwebp, Playwright Chromium):
+
+```sh
+node desktop/scripts/record-scenes.js            # all scenes, or e.g.: home copy gaps
+desktop/scripts/encode-demos.sh                  # /tmp/socha-rec/raw/*.mkv -> site/assets/
+```
+
+The script copies `sample/demo-a|demo-b` into scratch folders named `C:\Projects\shop-v1|v2`
+(a relative path on Linux may contain `\` and `:`), starts its own Xvfb, server (temp data dir,
+default settings) and kiosk Chromium, and drives it with real X input. Key captions such as
+"Ctrl + S" are a recording-only overlay. Scenes: `home`, `compare`, `shortcut`, `exclude`,
+`whitespace`, `copy`, `gaps`, `links` (hover only: no OS windows), `views`, `sync`.
 
 ## Continuous publishing (`.github/workflows/publish-desktop.yml`)
 
