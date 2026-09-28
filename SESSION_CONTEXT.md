@@ -716,13 +716,25 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
 - **Deploy** (replaced Web Deploy; no `DEPLOY_*` secrets): job `deploy` on the self-hosted runner
   `socha3-sochadiff` (`[self-hosted, Windows, X64, sochadiff]`, non-admin `.\gha-sochadiff`) on
   the IIS server (site `SochaDiff`, `C:\WebApps\SochaDiff`, Cloudflare in front); only push to
-  main or dispatch from main. `deploy-site.ps1` (PS 5.1 + 7, local/UNC target): artifact checks,
+  main or dispatch from main, and `environment: production` (url https://sochadiff.socha3.com;
+  deployment branch policy: `main` only; no required reviewers, so merges auto-deploy).
+  `deploy-site.ps1` (PS 5.1 + 7, local/UNC target): artifact checks,
   version guard vs target/live `version.json` (`force`), backup to
-  `C:\WebApps\_deploy-backups\<timestamp>-<live version>` (keep 5), robocopy without deletes
+  `C:\WebApps\_deploy-backups\SochaDiff\<timestamp>-<live version>` (keep 5; folder created if
+  missing; pruning only touches that folder's own `<timestamp>-<version|unknown>` subfolders, no
+  junctions), robocopy without deletes
   (folders + root files, then `SochaDiff.application`, `version.json`, `index.html` swapped in
   last; exit 0-7 ok), verify `version.json` + `SochaDiff.application` (200,
   `application/x-ms-application`) with a cache-busting query (stale Cloudflare cache = warning),
   job summary.
+- **Public repo** (since 2026-09-27): fork-PR workflow runs from outside contributors need approval
+  (`actions/permissions/fork-pr-contributor-approval` = `all_external_contributors`); `main` is
+  PR-only (ruleset); `production` is limited to `main`. Runner `socha3-sochadiff` is repo-scoped,
+  non-admin, logon-restricted `.\gha-sochadiff` (Modify on `C:\WebApps\SochaDiff` and
+  `C:\WebApps\_deploy-backups\SochaDiff` only), job-completed workspace-cleanup hook. Signing
+  secrets stay repo secrets (the `build` job has no environment). **Never approve a fork PR's
+  workflow run without reading every workflow file change**: a fork's workflow can target the
+  self-hosted runner's labels and run on the web server.
 - Still open: the workflow only runs once merged to main (first real deploy + install/update test
   of a CI-published build on Windows); pruning old `Application Files` folders is manual.
 

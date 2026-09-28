@@ -12,8 +12,12 @@
        setup.exe and "Application Files\SochaDiff_a_b_c_d" must exist and agree on the version.
     2. Version guard: refuses a version that is not newer than the live one (the target's
        version.json, and <SiteUrl>/version.json), unless -Force.
-    3. Backs up the current content root to <BackupRoot>\<yyyyMMdd-HHmmss>-<live version> and
-       keeps only the newest -KeepBackups backups (only folders named like that are pruned).
+    3. Backs up the current content root to <BackupRoot>\<yyyyMMdd-HHmmss>-<live version>
+       (default BackupRoot C:\WebApps\_deploy-backups\SochaDiff, a folder for this site only;
+       it is created if missing) and keeps only the newest -KeepBackups backups. Pruning only
+       looks at the direct subfolders of BackupRoot whose names match exactly what this script
+       creates (yyyyMMdd-HHmmss-<a.b[.c[.d]]> or yyyyMMdd-HHmmss-unknown) and never follows
+       junctions/symlinks; anything else in BackupRoot is left alone.
     4. Copies WITHOUT deleting anything on the server (no /MIR, no /PURGE): old
        "Application Files\SochaDiff_*" folders stay for clients that are mid-update, and an
        existing web.config is only ever overwritten by the new one, never removed.
@@ -42,8 +46,9 @@ param(
   [Parameter(Mandatory)] [string]$Source,
   # The IIS site's physical path (local or UNC). Must already exist.
   [string]$TargetPath = 'C:\WebApps\SochaDiff',
-  # Backups of the content root go into <BackupRoot>\<yyyyMMdd-HHmmss>-<live version>.
-  [string]$BackupRoot = 'C:\WebApps\_deploy-backups',
+  # Backups of the content root go into <BackupRoot>\<yyyyMMdd-HHmmss>-<live version>. The folder
+  # is this site's own (created if missing); the runner account only needs Modify on it.
+  [string]$BackupRoot = 'C:\WebApps\_deploy-backups\SochaDiff',
   [ValidateRange(1, 100)] [int]$KeepBackups = 5,
   [switch]$SkipBackup,
   # Public URL of the site root (version guard and verification).
@@ -163,9 +168,15 @@ function Copy-FileLast([string]$Name) {
   Write-Host "Copied $Name"
 }
 
+# Exactly the folder names this script creates: <yyyyMMdd-HHmmss>-<live version or 'unknown'>.
+$backupNamePattern = '^\d{8}-\d{6}-(\d+(\.\d+){1,3}|unknown)$'
+
 function Remove-OldBackups {
-  $all = @(Get-ChildItem -LiteralPath $BackupRoot -Directory |
-    Where-Object { $_.Name -match '^\d{8}-\d{6}-' } | Sort-Object Name -Descending)
+  # Only direct subfolders of BackupRoot with this script's own name pattern, never reparse
+  # points (a junction's target must not be deleted), newest first by name (= by time).
+  $all = @(Get-ChildItem -LiteralPath $BackupRoot -Directory -Force |
+    Where-Object { $_.Name -match $backupNamePattern -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+    Sort-Object Name -Descending)
   foreach ($dir in @($all | Select-Object -Skip $KeepBackups)) {
     try {
       Remove-Item -LiteralPath $dir.FullName -Recurse -Force
@@ -258,6 +269,12 @@ try {
   } elseif (-not (Get-ChildItem -LiteralPath $TargetPath -Force | Select-Object -First 1)) {
     Add-Summary '- Backup: skipped (target was empty)'
   } else {
+    if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
+      # First run with the per-site folder: create it (the runner account can do this while it has
+      # Modify on the parent; afterwards it only needs Modify on this folder).
+      New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null
+      Write-Host "Created backup folder $BackupRoot"
+    }
     $label = if ($localVersion) { $localVersion.ToString() } else { 'unknown' }
     $backupDir = Join-Path $BackupRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $label)
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
