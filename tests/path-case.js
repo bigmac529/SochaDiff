@@ -1,16 +1,24 @@
 "use strict";
 
 /**
- * Platform path-case rule: case-insensitive matching on Windows, exact on *nix.
+ * Path case rule: each compare root's filesystem is probed for case
+ * sensitivity; pairing ignores case when either folder does.
  *
  * Run:  npm run test:pathcase
  *
- * Both modes are exercised on any OS through SOCHA_PATH_CASE=insensitive|sensitive:
- *   1. lib checks (pairing, only-in lists, whitespace-only, case clashes, Make
- *      match in both directions, delete guards) run in one child process per mode,
- *      since the mode is fixed when lib/path-case.js loads;
- *   2. HTTP checks start `node server.js` per mode and drive compare/sync;
- *   3. a browser check (Playwright) confirms both real names are displayed and
+ *   1. setting/platform-default resolution and detection (entry probe, parent
+ *      fallback, platform fallback, override) on the temp filesystem;
+ *   2. lib checks (pairing, only-in lists, whitespace-only, case clashes, Make
+ *      match in both directions, delete guards) for every A/B combination
+ *      (both sensitive, both insensitive, mixed) via compareFolders' caseModes;
+ *   3. HTTP checks start `node server.js` with SOCHA_PATH_CASE=sensitive,
+ *      insensitive and auto;
+ *   4. optional real-filesystem checks: set SOCHA_PATHCASE_INSENSITIVE_DIR to a
+ *      folder on a case-insensitive volume (e.g. an exFAT mount) to test detection
+ *      there and mixed A/B pairing and sync against real aliasing, and
+ *      SOCHA_PATHCASE_EMPTY_MOUNT to an EMPTY dedicated mount to test the temp
+ *      write-probe fallback;
+ *   5. a browser check (Playwright) confirms both real names are displayed and
  *      each A/B link opens its own side's name. Soft-skipped when Playwright or
  *      its browsers are missing, like the other suites.
  *
@@ -21,7 +29,7 @@
  * name" behavior.
  *
  * On a case-insensitive temp filesystem (Windows, default macOS) the suite runs
- * against real aliasing instead: checks that need two names differing only by
+ * against real aliasing instead (and auto mode detects "insensitive" there): checks that need two names differing only by
  * case in one folder (clashes, hard-link alias) are skipped, and sensitive-mode
  * Make match is checked for "no data lost" rather than an exact mirror.
  */
@@ -30,10 +38,23 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { spawn } = require("child_process");
+
+// Detection must run in auto mode here regardless of the caller's shell.
+delete process.env.SOCHA_PATH_CASE;
+const pathCase = require("../lib/path-case");
+const compare = require("../lib/compare");
 
 const ROOT = path.resolve(__dirname, "..");
 const MODES = ["sensitive", "insensitive"];
+const COMBOS = [
+  { label: "A sensitive, B sensitive", a: "sensitive", b: "sensitive" },
+  { label: "A insensitive, B insensitive", a: "insensitive", b: "insensitive" },
+  { label: "A insensitive, B sensitive", a: "insensitive", b: "sensitive" },
+  { label: "A sensitive, B insensitive", a: "sensitive", b: "insensitive" },
+];
+const INSENSITIVE_DIR = process.env.SOCHA_PATHCASE_INSENSITIVE_DIR || "";
+const EMPTY_MOUNT = process.env.SOCHA_PATHCASE_EMPTY_MOUNT || "";
 
 // Does the temp filesystem treat names that differ only by case as one file?
 function probeCaseInsensitiveFs() {
@@ -100,9 +121,9 @@ const BIN_B = Buffer.from([0x89, 0x50, 0x00, 0x09, 0x09]);
 
 // Main fixture: names that differ only by case across A and B, plus ordinary
 // entries that must behave the same in both modes.
-function makeMainFixture(base) {
+function makeMainFixture(base, bBase = base) {
   const a = path.join(base, "a");
-  const b = path.join(base, "b");
+  const b = path.join(bBase, "b");
   write(a, "Readme.md", "hello\n");
   write(b, "README.md", "world\n");
   write(a, "Same.txt", "same\n");
@@ -136,8 +157,8 @@ function makeClashFixture(base) {
   return { a, b };
 }
 
-function tmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `socha-pathcase-${prefix}-`));
+function tmp(prefix, parent = os.tmpdir()) {
+  return fs.mkdtempSync(path.join(parent, `socha-pathcase-${prefix}-`));
 }
 
 const paths = (list) => list.map((f) => f.path);
@@ -145,25 +166,25 @@ const byPath = (list, p) => list.find((f) => f.path === p);
 
 // ---------- lib checks (child process, one mode) ----------
 
-function runLibChecks(mode) {
-  const insensitive = mode === "insensitive";
-  const pc = require("../lib/path-case");
-  const compare = require("../lib/compare");
-  const { compareFolders, syncFromComparison, hashFolder } = compare;
-  const t = (name) => `[${mode}] ${name}`;
+function runLibChecks(combo) {
+  const caseModes = { a: combo.a, b: combo.b };
+  const insensitive = combo.a === "insensitive" || combo.b === "insensitive";
+  const mode = insensitive ? "insensitive" : "sensitive"; // pairing
+  const { syncFromComparison, hashFolder } = compare;
+  const compareFolders = (x, y) => compare.compareFolders(x, y, { caseModes });
+  const t = (name) => `[${combo.label}] ${name}`;
   const cleanup = [];
 
   try {
-    assert(t("mode resolved from SOCHA_PATH_CASE"), pc.CASE_INSENSITIVE_PATHS === insensitive);
-    assert(t("pathKey folds only in insensitive mode"), pc.pathKey("Docs/Readme.md") === (insensitive ? "DOCS/README.MD" : "Docs/Readme.md"));
-    assert(t("pathsEqual follows the mode"), pc.pathsEqual("a/B.txt", "A/b.TXT") === insensitive);
 
     // ---- comparison ----
     let base = tmp("cmp");
     cleanup.push(base);
     let { a, b } = makeMainFixture(base);
     let r = compareFolders(a, b);
-    assert(t("result.pathCase"), r.pathCase === mode, r.pathCase);
+    assert(t(`result.pathCase: pairing ${mode}`),
+      r.pathCase && r.pathCase.a === combo.a && r.pathCase.b === combo.b && r.pathCase.pairing === mode &&
+      r.pathCase.detection.a === "given", JSON.stringify(r.pathCase));
     assert(t("no case clashes in main fixture"), Array.isArray(r.caseConflicts) && r.caseConflicts.length === 0);
     assert(t("errors empty"), r.errors.length === 0, JSON.stringify(r.errors));
     assert(t("exact-name pair unchanged"), (() => {
@@ -243,7 +264,7 @@ function runLibChecks(mode) {
       assert(t("B match A (case-insensitive fs): variants not deleted, reported"),
         changes.errors.length === 5 && changes.errors.every((e) => /^Not deleted/.test(e.message)) &&
         JSON.stringify(changes.deleted) === JSON.stringify(["only-b.txt"]), JSON.stringify(changes));
-      log("  - [sensitive] exact-mirror and Make A match B checks skipped: temp filesystem is case-insensitive");
+      log(`  - [${combo.label}] exact-mirror and Make A match B checks skipped: temp filesystem is case-insensitive`);
     } else {
       assert(t("Make B match A: no errors"), changes.errors.length === 0, JSON.stringify(changes.errors));
       if (insensitive) {
@@ -302,7 +323,7 @@ function runLibChecks(mode) {
 
     // ---- case clashes inside one folder ----
     if (FS_INSENSITIVE) {
-      log(`  - [${mode}] clash, alias and hard-link checks skipped: temp filesystem is case-insensitive`);
+      log(`  - [${combo.label}] clash, alias and hard-link checks skipped: temp filesystem is case-insensitive`);
       return;
     }
     base = tmp("clash");
@@ -362,24 +383,60 @@ function runLibChecks(mode) {
       JSON.stringify(fs.readdirSync(b)));
 
     // ---- delete guards ----
-    // Simulate a case-insensitive volume (e.g. macOS APFS in sensitive mode): B's
-    // "Readme.md" is another name for its README.md (a hard link here), and the
-    // comparison lists only README.md, as a real case-insensitive listing would.
-    base = tmp("alias");
-    cleanup.push(base);
-    a = path.join(base, "a");
-    b = path.join(base, "b");
-    write(a, "Readme.md", "hello\n");
-    write(b, "README.md", "world\n");
-    fs.linkSync(path.join(b, "README.md"), path.join(b, "Readme.md"));
-    const synthetic = {
-      differing: [], binaryDiffering: [], whitespaceOnly: [], identical: [],
-      onlyInA: [{ path: "Readme.md" }], onlyInB: [{ path: "README.md" }],
-    };
-    changes = syncFromComparison(synthetic, a, b, "A");
-    assert(t("alias guard: the aliased file is not deleted"), changes.deleted.length === 0 && listed(b, "README.md"), JSON.stringify(changes));
-    assert(t("alias guard: target keeps the source content"), read(b, "README.md") === "hello\n");
-    assert(t("alias guard: skip is reported as an error"), changes.errors.length === 1 && /Not deleted/.test(changes.errors[0].message), JSON.stringify(changes.errors));
+    // Simulate a case-insensitive TARGET volume: B's "Readme.md" is another name
+    // for its README.md (a hard link here), and the comparison lists only
+    // README.md, as a real case-insensitive listing would. With exact pairing
+    // only the target-based identity guard can catch it, so pairing is fixed to
+    // sensitive here and the target mode varies.
+    if (combo.a === "sensitive" && combo.b === "sensitive") {
+      for (const target of ["insensitive", "sensitive"]) {
+        base = tmp("alias");
+        cleanup.push(base);
+        a = path.join(base, "a");
+        b = path.join(base, "b");
+        write(a, "Readme.md", "hello\n");
+        write(b, "README.md", "world\n");
+        fs.linkSync(path.join(b, "README.md"), path.join(b, "Readme.md"));
+        const synthetic = {
+          pathCase: { a: "sensitive", b: target, pairing: "sensitive" },
+          differing: [], binaryDiffering: [], whitespaceOnly: [], identical: [],
+          onlyInA: [{ path: "Readme.md" }], onlyInB: [{ path: "README.md" }],
+        };
+        changes = syncFromComparison(synthetic, a, b, "A");
+        if (target === "insensitive") {
+          assert(t("alias guard (target insensitive): same file is not deleted"), changes.deleted.length === 0 && listed(b, "README.md"), JSON.stringify(changes));
+          assert(t("alias guard (target insensitive): target keeps the source content"), read(b, "README.md") === "hello\n");
+          assert(t("alias guard (target insensitive): skip is reported"), changes.errors.length === 1 && /Not deleted/.test(changes.errors[0].message), JSON.stringify(changes.errors));
+        } else {
+          // A case-sensitive target really has two entries (hard links), so
+          // deleting one loses nothing: behavior unchanged from before.
+          assert(t("alias guard (target sensitive): hard-linked variant deleted as before"),
+            JSON.stringify(changes.deleted) === JSON.stringify(["README.md"]) && changes.errors.length === 0 && read(b, "Readme.md") === "hello\n",
+            JSON.stringify(changes));
+        }
+      }
+    }
+    // With case-insensitive pairing the key guard alone protects the variant.
+    if (insensitive) {
+      base = tmp("keyguard");
+      cleanup.push(base);
+      a = path.join(base, "a");
+      b = path.join(base, "b");
+      write(a, "Readme.md", "hello\n");
+      write(b, "README.md", "world\n");
+      const synthetic = {
+        pathCase: { a: combo.a, b: combo.b, pairing: "insensitive" },
+        differing: [], binaryDiffering: [], whitespaceOnly: [], identical: [],
+        onlyInA: [{ path: "Readme.md" }], onlyInB: [{ path: "README.md" }],
+      };
+      changes = syncFromComparison(synthetic, a, b, "A");
+      // The new file resolves onto the existing README.md (same slot), which
+      // then must not be deleted as "target-only".
+      assert(t("key guard: same-key file written in place and never deleted"),
+        changes.deleted.length === 0 && read(b, "README.md") === "hello\n" && !listed(b, "Readme.md") &&
+        JSON.stringify(changes.updated) === JSON.stringify(["README.md"]) && changes.errors.some((e) => /Not deleted/.test(e.message)),
+        JSON.stringify(changes));
+    }
 
     // Control: hard-linked files with unrelated names are still deleted as before.
     base = tmp("hardlink");
@@ -465,14 +522,19 @@ async function startServer(mode) {
 }
 
 async function runHttpChecks(mode) {
-  const insensitive = mode === "insensitive";
+  const insensitive = mode === "insensitive" || (mode === "auto" && FS_INSENSITIVE);
   const t = (name) => `[${mode}] http: ${name}`;
   const base = tmp("http");
   const srv = await startServer(mode);
   try {
     const { a, b } = makeMainFixture(base);
     let r = await request(srv.port, "POST", "/api/compare", { folderA: a, folderB: b });
-    assert(t("compare 200 with pathCase"), r.status === 200 && r.body.pathCase === mode, `${r.status} ${r.body.pathCase}`);
+    const pc = r.body.pathCase || {};
+    const method = mode === "auto" ? "entry" : "override";
+    assert(t(`compare 200, pathCase pairing ${insensitive ? "insensitive" : "sensitive"} (${method})`),
+      r.status === 200 && pc.pairing === (insensitive ? "insensitive" : "sensitive") &&
+      pc.detection && pc.detection.a === method && pc.detection.b === method,
+      `${r.status} ${JSON.stringify(pc)}`);
     const readme = byPath(r.body.differing || [], "Readme.md");
     assert(t(insensitive ? "Readme.md paired with README.md" : "Readme.md unpaired"),
       insensitive ? !!readme && readme.pathB === "README.md" : !readme && paths(r.body.onlyInB).includes("README.md"));
@@ -547,6 +609,7 @@ async function runUiChecks() {
             if (!row) return null;
             return {
               alt: row.querySelector(".path-case-alt")?.textContent || null,
+              altTitle: row.querySelector(".path-case-alt")?.title || null,
               a: row.querySelector(".path-side-link.side-a") ? rel(row.querySelector(".path-side-link.side-a").href) : null,
               b: row.querySelector(".path-side-link.side-b") ? rel(row.querySelector(".path-side-link.side-b").href) : null,
             };
@@ -562,6 +625,7 @@ async function runUiChecks() {
         });
         if (mode === "insensitive") {
           assert(t("differing row shows B's real name"), info.readme && info.readme.alt === "B: README.md", JSON.stringify(info.readme));
+          assert(t("hint tooltip names the detected reason"), info.readme && /both folders ignore letter case/.test(info.readme.altTitle || ""), JSON.stringify(info.readme));
           assert(t("A link opens Readme.md, B link opens README.md"), info.readme && info.readme.a === "Readme.md" && info.readme.b === "README.md", JSON.stringify(info.readme));
           assert(t("directory casing shown and linked per side"), info.guide && info.guide.alt === "B: docs/guide.md" && info.guide.b === "docs/guide.md" && info.guide.a === "Docs/guide.md", JSON.stringify(info.guide));
           assert(t("identical row shows B's real name"), info.same && info.same.alt === "B: same.txt" && info.same.b === "same.txt", JSON.stringify(info.same));
@@ -602,62 +666,232 @@ async function runUiChecks() {
 // ---------- main ----------
 
 function runResolveChecks() {
-  const { resolveCaseInsensitive, foldCase } = require("../lib/path-case");
+  const { pathCaseSetting, platformDefault, foldCase, swapAsciiCase, makePathKey } = pathCase;
   const quiet = console.warn;
   console.warn = () => {};
   try {
-    assert("platform default: win32 is case-insensitive", resolveCaseInsensitive({}, "win32") === true);
-    assert("platform default: linux is case-sensitive", resolveCaseInsensitive({}, "linux") === false);
-    assert("platform default: darwin follows *nix (case-sensitive)", resolveCaseInsensitive({}, "darwin") === false);
-    assert("override insensitive on linux", resolveCaseInsensitive({ SOCHA_PATH_CASE: " Insensitive " }, "linux") === true);
-    assert("override sensitive on win32", resolveCaseInsensitive({ SOCHA_PATH_CASE: "sensitive" }, "win32") === false);
-    assert("invalid override falls back to platform", resolveCaseInsensitive({ SOCHA_PATH_CASE: "bogus" }, "win32") === true);
+    assert("setting: default is auto", pathCaseSetting({}) === "auto");
+    assert("setting: insensitive (trimmed, any case)", pathCaseSetting({ SOCHA_PATH_CASE: " Insensitive " }) === "insensitive");
+    assert("setting: sensitive", pathCaseSetting({ SOCHA_PATH_CASE: "sensitive" }) === "sensitive");
+    assert("setting: AUTO", pathCaseSetting({ SOCHA_PATH_CASE: "AUTO" }) === "auto");
+    assert("setting: invalid value falls back to auto", pathCaseSetting({ SOCHA_PATH_CASE: "bogus" }) === "auto");
   } finally {
     console.warn = quiet;
   }
+  assert("platform default: win32 and darwin insensitive",
+    platformDefault("win32") === "insensitive" && platformDefault("darwin") === "insensitive");
+  assert("platform default: linux and freebsd sensitive",
+    platformDefault("linux") === "sensitive" && platformDefault("freebsd") === "sensitive");
+  assert("swapAsciiCase swaps ASCII letters only", swapAsciiCase("Readme-1.MD") === "rEADME-1.md" && swapAsciiCase("Äb") === "ÄB");
+  assert("makePathKey: exact vs folded", makePathKey(false)("Docs/A.md") === "Docs/A.md" && makePathKey(true)("Docs/A.md") === "DOCS/A.MD");
   assert("foldCase: simple mapping only (ß is not SS)", foldCase("straße") !== foldCase("STRASSE") && foldCase("Straße") === foldCase("STRAßE"));
   assert("foldCase: non-ASCII letters fold", foldCase("Ärger/Ölé.txt") === foldCase("äRGER/öLÉ.TXT"));
 }
 
-async function main() {
-  const child = process.argv.indexOf("--lib-checks");
-  if (child !== -1) {
-    runLibChecks(process.argv[child + 1]);
-    process.stdout.write(`@@RESULT ${JSON.stringify({ pass: PASS.length, fail: FAIL.length })}\n`);
-    process.exitCode = FAIL.length ? 1 : 0;
+// Detection on the temp filesystem (case-sensitive on Linux, insensitive on
+// Windows / default macOS) and the non-disk fallbacks.
+function runDetectionChecks(parent = os.tmpdir(), expected = FS_INSENSITIVE ? "insensitive" : "sensitive", label = "temp fs") {
+  const { detectPathCase, probeDirectory } = pathCase;
+  const t = (name) => `[detect ${label}] ${name}`;
+  const base = tmp("detect", parent);
+  try {
+    write(base, "withfiles/Readme.md", "x");
+    write(base, "withfiles/123", "x");
+    fs.mkdirSync(path.join(base, "empty"));
+    write(base, "digits/42", "x");
+    write(base, "digits/7/8", "x");
+    let d = detectPathCase(path.join(base, "withfiles"));
+    assert(t(`folder with a lettered entry: ${expected} via entry`), d.mode === expected && d.method === "entry", JSON.stringify(d));
+    d = detectPathCase(path.join(base, "empty"));
+    assert(t(`empty folder: ${expected} via parent`), d.mode === expected && d.method === "parent", JSON.stringify(d));
+    d = detectPathCase(path.join(base, "digits"));
+    assert(t(`only unlettered names: ${expected} via parent`), d.mode === expected && d.method === "parent", JSON.stringify(d));
+    d = detectPathCase(path.join(base, "digits", "7"));
+    assert(t("nested unlettered names walk up to a lettered ancestor"), d.mode === expected && d.method === "parent", JSON.stringify(d));
+    if (expected === "sensitive") {
+      write(base, "both/Foo", "1");
+      write(base, "both/fOO", "2");
+      d = detectPathCase(path.join(base, "both"));
+      assert(t("both spellings present: sensitive"), d.mode === "sensitive" && d.method === "entry", JSON.stringify(d));
+    }
+    const r = compare.compareFolders(path.join(base, "withfiles"), path.join(base, "empty"));
+    assert(t("compareFolders reports per-folder detection"),
+      r.pathCase.a === expected && r.pathCase.b === expected && r.pathCase.pairing === expected &&
+      r.pathCase.detection.a === "entry" && r.pathCase.detection.b === "parent", JSON.stringify(r.pathCase));
+    if (label === "temp fs") {
+      d = detectPathCase(path.join(base, "withfiles"), { setting: "insensitive" });
+      assert(t("override insensitive wins"), d.mode === "insensitive" && d.method === "override");
+      d = detectPathCase(path.join(base, "withfiles"), { setting: "sensitive" });
+      assert(t("override sensitive wins"), d.mode === "sensitive" && d.method === "override");
+      const missing = path.join(base, "does-not-exist");
+      assert(t("probeDirectory: unreadable folder gives no answer"), probeDirectory(missing) === null);
+      d = detectPathCase(missing, { platform: "darwin" });
+      assert(t("nothing to probe: platform default (darwin insensitive)"), d.mode === "insensitive" && d.method === "platform", JSON.stringify(d));
+      d = detectPathCase(missing, { platform: "linux" });
+      assert(t("nothing to probe: platform default (linux sensitive)"), d.mode === "sensitive" && d.method === "platform", JSON.stringify(d));
+      d = detectPathCase(missing, { platform: "win32" });
+      assert(t("nothing to probe: platform default (win32 insensitive)"), d.mode === "insensitive" && d.method === "platform", JSON.stringify(d));
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
+// Temp write-probe fallback. Needs a dedicated EMPTY mount (no lettered names
+// anywhere on that volume above the probed folder).
+function runTempProbeChecks() {
+  if (!EMPTY_MOUNT) {
+    log("  - temp write-probe fallback skipped (set SOCHA_PATHCASE_EMPTY_MOUNT to an empty mount)");
     return;
   }
+  const { detectPathCase } = pathCase;
+  const top = path.join(EMPTY_MOUNT, String(process.pid));
+  try {
+    fs.mkdirSync(path.join(top, "1", "2"), { recursive: true });
+    fs.mkdirSync(path.join(top, "1", "3"));
+    fs.writeFileSync(path.join(top, "1", "3", "x"), "");
+    const expected = fs.existsSync(path.join(top, "1", "3", "X")) ? "insensitive" : "sensitive";
+    fs.rmSync(path.join(top, "1", "3", "x"));
+    let d = detectPathCase(path.join(top, "1", "2"), { tmpdir: path.join(top, "1", "3") });
+    assert(`[detect empty mount] same-volume temp folder: ${expected} via temp`, d.mode === expected && d.method === "temp", JSON.stringify(d));
+    assert("[detect empty mount] probe leaves nothing behind", fs.readdirSync(path.join(top, "1", "3")).length === 0);
+    d = detectPathCase(path.join(top, "1", "2"), { tmpdir: os.tmpdir(), platform: "freebsd" });
+    const sameVolume = fs.statSync(os.tmpdir()).dev === fs.statSync(top).dev;
+    if (!sameVolume) {
+      assert("[detect empty mount] temp folder on another volume: platform default", d.mode === "sensitive" && d.method === "platform", JSON.stringify(d));
+    }
+  } finally {
+    fs.rmSync(top, { recursive: true, force: true });
+  }
+}
 
-  log("Socha Diff - platform path case (Windows: insensitive, *nix: sensitive)");
+// Real case-insensitive volume (SOCHA_PATHCASE_INSENSITIVE_DIR): detection and
+// mixed A/B pairing + sync with auto detection, against real aliasing.
+async function runMountedChecks() {
+  runTempProbeChecks();
+  if (!INSENSITIVE_DIR) {
+    log("  - skipped (set SOCHA_PATHCASE_INSENSITIVE_DIR to a folder on a case-insensitive volume, e.g. an exFAT mount)");
+    return;
+  }
+  const M = INSENSITIVE_DIR;
+  const T = os.tmpdir();
+  const tMode = FS_INSENSITIVE ? "insensitive" : "sensitive";
+  runDetectionChecks(M, "insensitive", "insensitive volume");
+
+  const places = [
+    { label: "A on insensitive volume, B on temp fs", aParent: M, bParent: T, a: "insensitive", b: tMode },
+    { label: "A on temp fs, B on insensitive volume", aParent: T, bParent: M, a: tMode, b: "insensitive" },
+    { label: "A and B on insensitive volume", aParent: M, bParent: M, a: "insensitive", b: "insensitive" },
+  ];
+  const cleanup = [];
+  try {
+    for (const place of places) {
+      const t = (name) => `[real: ${place.label}] ${name}`;
+      for (const direction of ["A", "B"]) {
+        const aBase = tmp("real", place.aParent);
+        const bBase = tmp("real", place.bParent);
+        cleanup.push(aBase, bBase);
+        const { a, b } = makeMainFixture(aBase, bBase);
+        let r = compare.compareFolders(a, b);
+        if (direction === "A") {
+          assert(t("detected per folder, pairing insensitive"),
+            r.pathCase.a === place.a && r.pathCase.b === place.b && r.pathCase.pairing === "insensitive" &&
+            r.pathCase.detection.a === "entry" && r.pathCase.detection.b === "entry", JSON.stringify(r.pathCase));
+          const readme = byPath(r.differing, "Readme.md");
+          assert(t("Readme.md paired with README.md"), !!readme && readme.pathB === "README.md" && r.onlyInB.length === 1, JSON.stringify(r.summary));
+        }
+        const changes = compare.syncFromComparison(r, a, b, direction);
+        assert(t(`Make ${direction === "A" ? "B match A" : "A match B"}: no errors`), changes.errors.length === 0, JSON.stringify(changes.errors));
+        if (direction === "A") {
+          assert(t("B match A: README.md holds A's content, keeps its name"), read(b, "README.md") === "hello\n" && listed(b, "README.md") && !listed(b, "Readme.md"));
+          assert(t("B match A: docs/guide.md holds A's content"), read(b, "docs/guide.md") === "one\n" && listed(b, "docs") && !listed(b, "Docs"));
+          assert(t("B match A: only the real B-only file deleted"), JSON.stringify(changes.deleted) === JSON.stringify(["only-b.txt"]), JSON.stringify(changes.deleted));
+        } else {
+          assert(t("A match B: Readme.md holds B's content, keeps its name"), read(a, "Readme.md") === "world\n" && listed(a, "Readme.md") && !listed(a, "README.md"));
+          assert(t("A match B: only the real A-only files deleted"),
+            JSON.stringify([...changes.deleted].sort()) === JSON.stringify(["Docs/new.md", "only-a.txt"]), JSON.stringify(changes.deleted));
+        }
+        r = compare.compareFolders(a, b);
+        assert(t(`${direction === "A" ? "B match A" : "A match B"}: re-compare clean`),
+          r.differing.length === 0 && r.binaryDiffering.length === 0 && r.onlyInA.length === 0 && r.onlyInB.length === 0,
+          JSON.stringify(r.summary));
+      }
+    }
+
+    if (!FS_INSENSITIVE) {
+      // Case-sensitive A holding two spellings, case-insensitive B.
+      const t = (name) => `[real: A on temp fs with clashes, B on insensitive volume] ${name}`;
+      const aBase = tmp("realclash", T);
+      const bBase = tmp("realclash", M);
+      cleanup.push(aBase, bBase);
+      const a = path.join(aBase, "a");
+      const b = path.join(bBase, "b");
+      write(a, "dup.txt", "one\n");
+      write(a, "DUP.txt", "two\n");
+      write(a, "ok.txt", "ok A\n");
+      write(b, "Dup.txt", "three\n");
+      write(b, "ok.txt", "ok B\n");
+      let r = compare.compareFolders(a, b);
+      assert(t("pairing insensitive, clash reported"),
+        r.pathCase.pairing === "insensitive" && r.caseConflicts.length === 1 && r.errors.length === 3, JSON.stringify({ pc: r.pathCase, e: r.errors }));
+      let changes = compare.syncFromComparison(r, a, b, "A");
+      assert(t("Make B match A leaves the clash alone"),
+        changes.errors.length === 0 && read(b, "Dup.txt") === "three\n" && JSON.stringify(fs.readdirSync(b).sort()) === JSON.stringify(["Dup.txt", "ok.txt"]) && read(b, "ok.txt") === "ok A\n",
+        JSON.stringify({ changes, ls: fs.readdirSync(b) }));
+
+      // If detection were wrong (exact pairing into a case-insensitive target),
+      // the second spelling must not overwrite the file just written.
+      const b2 = path.join(bBase, "b2");
+      fs.mkdirSync(b2);
+      r = compare.compareFolders(a, b2, { caseModes: { a: "sensitive", b: "sensitive" } });
+      changes = compare.syncFromComparison(r, a, b2, "A");
+      const names = fs.readdirSync(b2).filter((n) => /dup/i.test(n));
+      assert(t("misdetected target: second spelling not copied over the first"),
+        names.length === 1 && changes.errors.length === 1 && /^Not copied/.test(changes.errors[0].message) &&
+        read(b2, changes.created.find((n) => /dup/i.test(n))) === read(a, changes.created.find((n) => /dup/i.test(n))),
+        JSON.stringify({ changes, names }));
+    }
+
+    // Server in auto mode reports the mixed detection.
+    const srv = await startServer("auto");
+    try {
+      const aBase = tmp("realhttp", M);
+      const bBase = tmp("realhttp", T);
+      cleanup.push(aBase, bBase);
+      const { a, b } = makeMainFixture(aBase, bBase);
+      const r = await request(srv.port, "POST", "/api/compare", { folderA: a, folderB: b });
+      assert("[real: http auto] compare reports A insensitive, B per temp fs, pairing insensitive",
+        r.status === 200 && r.body.pathCase.a === "insensitive" && r.body.pathCase.b === tMode && r.body.pathCase.pairing === "insensitive",
+        JSON.stringify(r.body.pathCase));
+    } finally {
+      srv.stop();
+    }
+  } finally {
+    for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function main() {
+  log("Socha Diff - path case (detected per folder; pairing ignores case if either folder does)");
   log(`temp filesystem: case-${FS_INSENSITIVE ? "insensitive" : "sensitive"} (${os.tmpdir()})`);
   log("\n-- mode resolution --");
   runResolveChecks();
 
-  for (const mode of MODES) {
-    log(`\n-- lib: SOCHA_PATH_CASE=${mode} --`);
-    const res = spawnSync(process.execPath, [__filename, "--lib-checks", mode], {
-      cwd: ROOT,
-      env: { ...process.env, SOCHA_PATH_CASE: mode },
-      encoding: "utf8",
-    });
-    const out = res.stdout || "";
-    const match = out.match(/^@@RESULT (.*)$/m);
-    process.stdout.write(out.replace(/^@@RESULT .*\n?/m, ""));
-    if (res.stderr) process.stdout.write(res.stderr);
-    if (!match) {
-      FAIL.push(`[${mode}] lib checks crashed`);
-      log(`  \u2717 [${mode}] lib checks crashed (exit ${res.status})`);
-      continue;
-    }
-    const counts = JSON.parse(match[1]);
-    for (let i = 0; i < counts.pass; i++) PASS.push(`[${mode}] lib`);
-    for (let i = 0; i < counts.fail; i++) FAIL.push(`[${mode}] lib`);
+  log("\n-- detection --");
+  runDetectionChecks();
+
+  for (const combo of COMBOS) {
+    log(`\n-- lib: ${combo.label} --`);
+    runLibChecks(combo);
   }
 
-  for (const mode of MODES) {
+  for (const mode of [...MODES, "auto"]) {
     log(`\n-- http: SOCHA_PATH_CASE=${mode} --`);
     await runHttpChecks(mode);
   }
+
+  log("\n-- real case-insensitive volume --");
+  await runMountedChecks();
 
   log("\n-- ui --");
   await runUiChecks();

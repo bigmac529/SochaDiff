@@ -121,13 +121,23 @@ function fileSidesSuffix(item, kind) {
   return span;
 }
 
+// Why names that differ only by case were paired, from the detected
+// per-folder filesystem behavior (result.pathCase).
+function caseAltTitle() {
+  const pc = (lastResult && lastResult.pathCase) || {};
+  const a = pc.a === "insensitive";
+  const b = pc.b === "insensitive";
+  const reason = a && b ? "both folders ignore letter case" : `Folder ${a ? "A" : "B"} ignores letter case`;
+  return `Folder B's copy has the same name except for letter case. They are compared as one file because ${reason}.`;
+}
+
 // A displayed file path: A's name, plus B's real name when it differs only by
-// letter case (the two were paired because paths are case-insensitive here).
+// letter case (paired because at least one folder ignores case).
 function appendFilePath(parent, className, item) {
   parent.appendChild(el("span", className, item.path));
   if (item.pathB && item.pathB !== item.path) {
     const alt = el("span", "path-case-alt", `B: ${item.pathB}`);
-    alt.title = "Folder B's copy has the same name except for letter case; names are matched case-insensitively on this system.";
+    alt.title = caseAltTitle();
     parent.append(" ", alt);
   }
 }
