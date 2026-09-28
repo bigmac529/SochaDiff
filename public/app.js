@@ -3043,6 +3043,26 @@ let settingsSaveTimer = 0;
 let settingsStatusFadeTimer = 0;
 
 trackCursorTooltip(settingsOpenBtn, document.getElementById("settings-shortcut-tooltip"));
+
+// ---------- help ----------
+// The guide lives on the download site. In a browser it opens in a new tab;
+// the desktop host turns window.open for off-app URLs into the default browser
+// (CoreWebView2.NewWindowRequested -> OpenExternal), never a second app window.
+const GUIDE_URL = "https://sochadiff.socha3.com/guide.html";
+const helpOpenBtn = document.getElementById("help-open-btn");
+
+function openGuide() {
+  window.open(GUIDE_URL, "_blank", "noopener");
+}
+
+trackCursorTooltip(helpOpenBtn, document.getElementById("help-tooltip"));
+if (helpOpenBtn) helpOpenBtn.addEventListener("click", openGuide);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "F1" && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
+    event.preventDefault(); // instead of the browser's own help page
+    if (!event.repeat) openGuide();
+  }
+});
 trackCursorTooltip(comparePendingIndicator, document.getElementById("compare-pending-tooltip"), "right");
 
 function setSettingsStatus(message, isError) {
