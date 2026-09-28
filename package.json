@@ -12,7 +12,8 @@
     "start": "node server.js --open",
     "test:selection": "node tests/selection-chaotic-drag.js && node tests/newline-selection.js",
     "test:paths": "node tests/path-validation.js",
-    "test:pathcase": "node tests/path-case.js"
+    "test:pathcase": "node tests/path-case.js",
+    "test:help": "node tests/help-button.js"
   },
   "dependencies": {
     "diff": "^5.2.0",

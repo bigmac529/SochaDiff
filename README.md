@@ -99,6 +99,14 @@ npm run test:selection
 
 Requires Playwright Chromium once (`npx playwright install chromium`). If browsers are missing, the script soft-skips with install instructions instead of failing the run. The harness starts `server.js` on an ephemeral port and uses `sample/sel-*` and `sample/blank-*` fixtures.
 
+## Help button test
+
+```sh
+npm run test:help
+```
+
+Checks the header `?` button (position next to Settings, style, tooltip, click and F1 call `window.open` with the guide URL; `window.open` is stubbed, so no network). Soft-skips without Playwright like the other suites.
+
 ## Path case tests
 
 ```sh

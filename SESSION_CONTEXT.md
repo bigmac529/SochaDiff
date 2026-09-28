@@ -364,6 +364,17 @@ slice, then expanded after each behavior was manually checked:
   tooltip; **click or Enter/Space toggles** the setting (`toggleWhitespaceSetting`,
   `applyWhitespaceIndicator`, `refreshWhitespaceIndicator`).
 - **Settings** is a `<button id="settings-open-btn">` opening a modal `<dialog id="settings-dialog">`.
+- Right of Settings, a square **`?` help button** (`#help-open-btn`, classes
+  `settings-link help-link`: same border/radius/colors/height as Settings, `min-width:31px`)
+  with `aria-label="Help: open the Socha Diff guide"`, `aria-keyshortcuts="F1"` and a
+  cursor tooltip (`#help-tooltip`) "Help: open the Socha Diff guide (every control
+  explained) · F1". Click or plain **F1** (no modifiers; `preventDefault` so the browser's
+  own help does not open) calls `openGuide()` =
+  `window.open("https://sochadiff.socha3.com/guide.html", "_blank", "noopener")`.
+  Browser: new tab. Desktop host: `NewWindowRequested` is handled and off-origin
+  http/https URLs go to the default browser via `OpenExternal` (see §desktop WebView2);
+  no server endpoint is involved. Test: `npm run test:help` (`tests/help-button.js`,
+  own server, `window.open` stubbed; not run by CI).
 
 **Settings modal**
 - Contents: "Ignore whitespace differences" checkbox (`#ignore-whitespace`), a gap
@@ -612,8 +623,8 @@ explicitly changes them.
 
 ## 13.3 Settings, icons, tooltips, and motion
 
-- The Settings button opens the in-page dialog by click or exact `Ctrl+S`. Its tooltip
-  and the whitespace-awareness tooltip follow the mouse, sit 3px above and 20px left
+- The Settings button opens the in-page dialog by click or exact `Ctrl+S`. Its tooltip,
+  the `?` help button's tooltip, and the whitespace-awareness tooltip follow the mouse, sit 3px above and 20px left
   of the cursor, and support keyboard focus.
 - The pending-settings indicator is a small four-point star over Compare's upper-right
   corner. It uses the same amber/panel shading as the whitespace-aware indicator. Its
@@ -702,7 +713,10 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
 - Lifecycle: node runs in a `KILL_ON_JOB_CLOSE` Job Object (with `SILENT_BREAKAWAY_OK`
   so apps opened via open-file/open-folder survive). Normal close also kills it.
 - WebView2: user data in `%LOCALAPPDATA%\SochaDiff\WebView2`. Off-origin links go to the
-  default browser. DevTools are enabled in Debug only. The browser-chrome items are
+  default browser: `NavigationStarting` cancels and `NewWindowRequested` handles (never a
+  second WebView2 window) any URL outside `http://127.0.0.1:<port>`, and `OpenExternal`
+  launches only http/https/mailto with `UseShellExecute`. The header `?` button relies on
+  this (`window.open` of the guide URL). DevTools are enabled in Debug only. The browser-chrome items are
   filtered out of the default context menu. The diff panes keep the app's own Copy
   menu, since the page cancels `contextmenu` there. A missing WebView2 Runtime shows a
   friendly panel.

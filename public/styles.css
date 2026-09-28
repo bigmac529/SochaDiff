@@ -108,6 +108,14 @@ body {
   color: #fff;
 }
 
+/* Square "?" help button with the Settings button's height and style. */
+.help-link {
+  min-width: 31px;
+  padding-left: 0;
+  padding-right: 0;
+  font-weight: 600;
+}
+
 .header-tooltip {
   position: absolute;
   z-index: 2;
