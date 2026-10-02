@@ -838,3 +838,37 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
   may linger on the server). Recorded by `desktop/scripts/record-scenes.js`, encoded by
   `desktop/scripts/encode-demos.sh` (see desktop/README.md "Site demos"); `record-demo.js` is legacy.
 - `web.config` already mapped `.webp`; `guide.html` got the same no-cache rule as `index.html`.
+
+## 14.4 Microsoft Store / MSIX channel (2026-10-01, branch `feat/msix-store`)
+
+- Separate from ClickOnce (unchanged: csproj, ClickOnce.pubxml, publish-site.ps1, publish-desktop.yml).
+  Details, risks and Partner Center steps: `desktop/STORE.md`.
+- Packaging: MakeAppx + hand-written `desktop/msix/Package.appxmanifest` (full trust:
+  `EntryPoint="Windows.FullTrustApplication"`, only `rescap:runFullTrust`; MinVersion 10.0.19041.0, x64),
+  no .wapproj / single-project MSIX. `desktop/msix/build-msix.ps1` (pwsh 7, Windows SDK): prepare-bundle
+  `-IncludeNode` -> `dotnet publish -p:PublishProfile=Msix` (self-contained win-x64) -> makepri
+  (createconfig without `<packaging>`) -> makeappx pack via mapping file -> signtool (sideload) /
+  zip into `.msixupload` (Store, unsigned). Output `desktop/out/msix/` + `msix-info.json`.
+- Identity: `desktop/msix/identity.json`: `store` = PLACEHOLDER until Partner Center (Store build refuses
+  PLACEHOLDER unless `-AllowPlaceholderIdentity`); `sideload` = `Socha3.SochaDiff.Sideload` / `CN=Socha3`
+  (Publisher must equal the PFX subject; the script uses the PFX subject if they differ).
+- Runtime: `PackageIdentity.cs` (GetCurrentPackageFullName). Packaged -> `NodeLocator` tries the bundled
+  `node\node.exe` first (then the usual order). Host logs `host: MSIX package <full name>` or
+  `host: not packaged`. Data dir unchanged (`%LOCALAPPDATA%\SochaDiff`, virtualized per package for new
+  files; an existing ClickOnce folder is used in place). No broadFileSystemAccess (full trust).
+- Assets: 77 PNGs in `desktop/msix/Assets/` generated from `site/favicon.svg` by `generate-assets.sh`
+  (rsvg-convert + ImageMagick). The desktop project has no .ico of its own.
+- Size (measured on the box): payload 236,865,172 bytes / 842 files (.NET ~139 MB, node.exe 93.6 MB, app 4.2 MB);
+  ~97 MB as a zip.
+- CI `.github/workflows/package-msix.yml`: workflow_dispatch (Store .msixupload + sideload .msix signed with
+  the Socha3 secrets, artifacts 30 days; smoke test) and pull_request on desktop/web paths (build check with
+  placeholder identity, throwaway cert, `smoke-test.ps1` install/launch/bundled-node/job-object check,
+  continue-on-error; no secrets, only msix-info.json uploaded). windows-latest only, `contents: read`,
+  actions: checkout, setup-dotnet, upload-artifact. actionlint 1.7.12 clean.
+- `site/privacy.html` (required: Store policy 10.5.1 for Win32/Desktop Bridge products) + footer links.
+- Verified 2026-10-01 by the PR check on windows-latest (Server 2025): makepri/makeappx/signtool OK,
+  .msix 94.6 MB, install + launch, `host: MSIX package ...`, bundled node used, server ready, WebView2
+  navigates, log virtualized to `Packages\<family>\LocalCache\Local\SochaDiff`, node dies with the host.
+- Not yet done: Windows 10/11 client test, WACK, Partner Center account/reservation, Open/Open with/job
+  breakaway test in the packaged build.
+
