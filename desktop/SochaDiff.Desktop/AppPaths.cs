@@ -9,7 +9,11 @@ namespace SochaDiff.Desktop;
 internal sealed record AppDirChoice(string Path, string Source, bool IsBundle);
 
 /// <summary>Per-user locations. Everything lives under %LOCALAPPDATA%\SochaDiff so it
-/// survives ClickOnce updates (which install each version into a new folder).</summary>
+/// survives ClickOnce updates (which install each version into a new folder).
+/// In the MSIX package the same path is used: Windows virtualizes NEW files/folders under
+/// %LOCALAPPDATA% for packaged desktop apps into %LOCALAPPDATA%\Packages\&lt;family&gt;\LocalCache\Local\
+/// (the app and its node.exe child still see the normal path; removed on uninstall), while a
+/// folder that already exists (e.g. from a ClickOnce install) is used in place. See desktop/STORE.md.</summary>
 internal static class AppPaths
 {
     /// <summary>Developer-only override: run the web app from this folder (Debug and Release).</summary>
@@ -27,7 +31,8 @@ internal static class AppPaths
 
     public static string PreviousServerLog => Path.Combine(DataDir, "server.previous.log");
 
-    /// <summary>node.exe staged by prepare-bundle -IncludeNode (portable builds only; normally absent).</summary>
+    /// <summary>node.exe staged by prepare-bundle -IncludeNode: portable builds and the MSIX package
+    /// (desktop/msix/build-msix.ps1); absent in ClickOnce.</summary>
     public static string BundledNodeExe => Path.Combine(AppContext.BaseDirectory, "node", "node.exe");
 
     /// <summary>The web app staged by prepare-bundle and copied next to SochaDiff.exe (build/publish/ClickOnce).</summary>

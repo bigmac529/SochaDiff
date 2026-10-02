@@ -69,6 +69,9 @@ internal sealed class NodeServer : IDisposable
             Log("host: bundle " + File.ReadAllText(AppPaths.BundleInfo).ReplaceLineEndings(" "));
         else if (!appDir.IsBundle)
             Log("host: not the staged bundle: running the web app from that folder as-is (settings still go to the data folder)");
+        Log(PackageIdentity.IsPackaged
+            ? $"host: MSIX package {PackageIdentity.FullName} (bundled node preferred; %LOCALAPPDATA% writes may be virtualized per package)"
+            : "host: not packaged (ClickOnce, folder or dev build)");
         var clickOnceVersion = Environment.GetEnvironmentVariable("ClickOnce_CurrentVersion");
         if (!string.IsNullOrEmpty(clickOnceVersion)) Log($"host: ClickOnce version {clickOnceVersion}");
 

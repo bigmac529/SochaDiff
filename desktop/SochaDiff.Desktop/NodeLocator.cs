@@ -14,7 +14,10 @@ internal sealed class NodeMissingException(string message, IReadOnlyList<NodeIns
 }
 
 /// <summary>
-/// Finds the user's Node.js (a prerequisite, not bundled). Order:
+/// Finds Node.js. ClickOnce/dev builds use the user's Node.js (a prerequisite, not bundled); the MSIX
+/// (Microsoft Store / sideload) package bundles a pinned node.exe and, when running with package
+/// identity (<see cref="PackageIdentity"/>), tries it FIRST. Order:
+///   0. MSIX package only: node\node.exe next to SochaDiff.exe (bundled in the package)
 ///   1. SOCHA_NODE (or the older SOCHA_DESKTOP_NODE) environment variable
 ///   2. node\node.exe next to SochaDiff.exe (portable builds made with prepare-bundle -IncludeNode)
 ///   3. node.exe on PATH (machine + user PATH re-read from the registry, so a Node installed
@@ -58,6 +61,9 @@ internal static class NodeLocator
             ? $"Socha Diff needs Node.js {MinimumMajor} or newer (the LTS release is recommended), and it was not found on this PC."
             : $"Socha Diff needs Node.js {MinimumMajor} or newer (the LTS release is recommended). This PC only has " +
               string.Join(", ", tooOld.Select(n => $"v{n.Version} ({n.Path})")) + ".";
+        if (PackageIdentity.IsPackaged)
+            message += $"\n\nThis Microsoft Store / MSIX build includes its own Node.js ({AppPaths.BundledNodeExe}), but it could not be started " +
+                       "(see the log). Reinstalling Socha Diff usually fixes that; installing Node.js 20+ also works as a fallback.";
         message += "\n\nInstall Node.js from nodejs.org (the Windows Installer, .msi, adds it to PATH), then click Retry. " +
                    "If Node.js is installed somewhere unusual, set the SOCHA_NODE environment variable to the full path of node.exe.";
         throw new NodeMissingException(message, tooOld);
@@ -65,6 +71,11 @@ internal static class NodeLocator
 
     private static IEnumerable<(string Path, string Source)> Candidates()
     {
+        // The MSIX package ships its own node.exe: prefer it so the Store app never depends on (or is
+        // broken by) whatever Node the user has. If it fails the probe, the usual search continues.
+        if (PackageIdentity.IsPackaged)
+            yield return (AppPaths.BundledNodeExe, "bundled node in the MSIX package");
+
         foreach (var name in new[] { "SOCHA_NODE", "SOCHA_DESKTOP_NODE" })
         {
             var env = AppPaths.Env(name);

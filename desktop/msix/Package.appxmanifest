@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX package manifest for Socha Diff (Microsoft Store + sideload test builds).
+  build-msix.ps1 copies this file to AppxManifest.xml and fills in, from identity.json / parameters:
+    Identity/@Name, Identity/@Publisher, Identity/@Version, Properties/PublisherDisplayName,
+    and (sideload only) the display names. The values below are PLACEHOLDERS: the Store values must
+    match the Partner Center reservation exactly (Product identity page). See desktop/STORE.md.
+  Full-trust Win32 desktop app (EntryPoint Windows.FullTrustApplication + runFullTrust). No other
+  capabilities: a full-trust app already reads every path the user can, so broadFileSystemAccess
+  is not needed, and internetClient/privateNetworkClientServer are AppContainer-only concepts.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="PLACEHOLDER.SochaDiff"
+    Publisher="CN=PLACEHOLDER-PARTNER-CENTER-PUBLISHER"
+    Version="1.0.0.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Socha Diff</DisplayName>
+    <PublisherDisplayName>PLACEHOLDER Publisher display name</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Shows every non-whitespace difference between two folders.</Description>
+  </Properties>
+
+  <Dependencies>
+    <!-- 19041 = Windows 10 2004; WebView2, .NET 10 and the bundled Node 24 all run there. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="SochaDiff" Executable="SochaDiff.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Socha Diff"
+        Description="Compare two folders and see every non-whitespace difference."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square71x71Logo="Assets\Square71x71Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png"
+          ShortName="Socha Diff">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+            <uap:ShowOn Tile="wide310x150Logo" />
+            <uap:ShowOn Tile="square310x310Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#10151d" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

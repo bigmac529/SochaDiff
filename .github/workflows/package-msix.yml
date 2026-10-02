@@ -1,0 +1,242 @@
+# Builds the MSIX packages of the Socha Diff desktop app (Microsoft Store + sideload test).
+# MANUAL ONLY for real packages; it never deploys, never submits to the Store and never touches the
+# ClickOnce release (publish-desktop.yml) or the self-hosted runner.
+#
+#   workflow_dispatch -> windows-latest: desktop/msix/build-msix.ps1
+#       store    : SochaDiff_<version>_x64.msixupload (unsigned; Partner Center signs it). Built only
+#                  when the Store identity (desktop/msix/identity.json or the inputs) has no PLACEHOLDER.
+#       sideload : SochaDiff-sideload_<version>_x64.msix signed with the Socha3 cert (secrets
+#                  SIGNING_PFX_BASE64/SIGNING_PFX_PASSWORD, the same as ClickOnce) + its .cer.
+#       version  : <major>.<minor>.<build_number input or run number>.0 (4th part 0, as the Store requires).
+#   pull_request (desktop/web app changes) -> windows-latest build check: both packages with the
+#       placeholder identity, sideload signed with a throwaway certificate created in the job, then
+#       installed, launched and checked (smoke-test.ps1). No repository secrets are read for PRs and
+#       no artifacts except msix-info.json are uploaded.
+#   public repo: every job runs on GitHub-hosted windows-latest ONLY. Never add the self-hosted
+#       runner (labels self-hosted/sochadiff) to this workflow: it runs pull request code.
+# Details: desktop/STORE.md.
+name: Package MSIX (Microsoft Store)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "Build number (3rd version part). Empty = this workflow's run number. Must increase for every Store submission."
+        type: string
+        default: ""
+      store:
+        description: "Build the Store .msixupload (needs the real Partner Center identity)"
+        type: boolean
+        default: true
+      sideload:
+        description: "Build the sideload .msix signed with the Socha3 certificate"
+        type: boolean
+        default: true
+      smoke_test:
+        description: "Install and launch the signed sideload package on the runner"
+        type: boolean
+        default: true
+      store_name:
+        description: "Override Package/Identity/Name (empty = desktop/msix/identity.json)"
+        type: string
+        default: ""
+      store_publisher:
+        description: "Override Package/Identity/Publisher, e.g. CN=XXXXXXXX-XXXX-... (empty = identity.json)"
+        type: string
+        default: ""
+      store_publisher_display_name:
+        description: "Override PublisherDisplayName (empty = identity.json)"
+        type: string
+        default: ""
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "server.js"
+      - "lib/**"
+      - "public/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/package-msix.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-msix-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    name: Build MSIX (${{ github.event_name == 'pull_request' && 'PR check' || 'manual' }})
+    # GitHub-hosted only (public repository; see the header).
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Plan
+        id: plan
+        shell: pwsh
+        env:
+          EVENT: ${{ github.event_name }}
+          IN_BUILD: ${{ inputs.build_number }}
+          IN_STORE: ${{ inputs.store }}
+          IN_SIDELOAD: ${{ inputs.sideload }}
+          IN_SMOKE: ${{ inputs.smoke_test }}
+          IN_NAME: ${{ inputs.store_name }}
+          IN_PUBLISHER: ${{ inputs.store_publisher }}
+          IN_PUBLISHER_DISPLAY: ${{ inputs.store_publisher_display_name }}
+        run: |
+          $build = if ($env:IN_BUILD) { [int]$env:IN_BUILD } else { [int]$env:GITHUB_RUN_NUMBER }
+          $v = Get-Content desktop/version.json -Raw | ConvertFrom-Json
+          $version = '{0}.{1}.{2}.0' -f [int]$v.major, [int]$v.minor, $build
+          $ids = (Get-Content desktop/msix/identity.json -Raw | ConvertFrom-Json).store
+          $name = if ($env:IN_NAME) { $env:IN_NAME } else { $ids.name }
+          $pub = if ($env:IN_PUBLISHER) { $env:IN_PUBLISHER } else { $ids.publisher }
+          $disp = if ($env:IN_PUBLISHER_DISPLAY) { $env:IN_PUBLISHER_DISPLAY } else { $ids.publisherDisplayName }
+          $placeholder = "$name|$pub|$disp" -match 'PLACEHOLDER'
+          if ($env:EVENT -eq 'pull_request') {
+            $kinds = 'Store,Sideload'; $smoke = $true
+          } else {
+            $k = @()
+            if ($env:IN_STORE -eq 'true') {
+              if ($placeholder) { Write-Host '::warning::Store identity still has PLACEHOLDER values (desktop/msix/identity.json or the store_* inputs): skipping the .msixupload. See desktop/STORE.md.' }
+              else { $k += 'Store' }
+            }
+            if ($env:IN_SIDELOAD -eq 'true') { $k += 'Sideload' }
+            if ($k.Count -eq 0) { Write-Host '::error::Nothing to build.'; exit 1 }
+            $kinds = $k -join ','; $smoke = ($env:IN_SMOKE -eq 'true') -and ($k -contains 'Sideload')
+          }
+          Add-Content $env:GITHUB_OUTPUT "version=$version"
+          Add-Content $env:GITHUB_OUTPUT "kinds=$kinds"
+          Add-Content $env:GITHUB_OUTPUT "smoke=$($smoke.ToString().ToLower())"
+          Write-Host "Socha Diff MSIX $version, kinds $kinds, smoke test $smoke, event $env:EVENT"
+
+      # Manual runs: the Socha3 certificate (same secrets as ClickOnce). Never for pull requests.
+      - name: Decode Socha3 signing certificate
+        id: pfx
+        if: github.event_name == 'workflow_dispatch' && contains(steps.plan.outputs.kinds, 'Sideload')
+        shell: pwsh
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          if (-not $env:SIGNING_PFX_BASE64 -or -not $env:SIGNING_PFX_PASSWORD) {
+            Write-Host '::warning::SIGNING_PFX_BASE64/SIGNING_PFX_PASSWORD not set: the sideload .msix is UNSIGNED.'
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "sochadiff-msix-$([guid]::NewGuid().ToString('N')).pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String(($env:SIGNING_PFX_BASE64 -replace '\s', '')))
+          Add-Content $env:GITHUB_OUTPUT "path=$pfx"
+
+      # Pull requests: a throwaway self-signed certificate, so the PR check can install the package.
+      - name: Create throwaway test certificate (PR check)
+        id: testpfx
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type Custom -Subject 'CN=SochaDiff CI Test' -KeyUsage DigitalSignature `
+            -FriendlyName 'SochaDiff MSIX CI test' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2) `
+            -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          $password = [guid]::NewGuid().ToString('N')
+          Write-Host "::add-mask::$password"
+          $pfx = Join-Path $env:RUNNER_TEMP 'sochadiff-ci-test.pfx'
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password (ConvertTo-SecureString $password -AsPlainText -Force) | Out-Null
+          Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($cert.Thumbprint)" -DeleteKey
+          Add-Content $env:GITHUB_OUTPUT "path=$pfx"
+          Add-Content $env:GITHUB_OUTPUT "password=$password"
+          Add-Content $env:GITHUB_OUTPUT "subject=CN=SochaDiff CI Test"
+
+      - name: Build MSIX
+        id: build
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          KINDS: ${{ steps.plan.outputs.kinds }}
+          EVENT: ${{ github.event_name }}
+          IN_NAME: ${{ inputs.store_name }}
+          IN_PUBLISHER: ${{ inputs.store_publisher }}
+          IN_PUBLISHER_DISPLAY: ${{ inputs.store_publisher_display_name }}
+          PFX_PATH: ${{ steps.pfx.outputs.path || steps.testpfx.outputs.path }}
+          # Only one of these is ever non-empty: the secret for manual runs, the throwaway password for PRs.
+          PFX_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.SIGNING_PFX_PASSWORD || steps.testpfx.outputs.password }}
+          TEST_SUBJECT: ${{ steps.testpfx.outputs.subject }}
+        run: |
+          $params = @{ Version = $env:VERSION; Kind = $env:KINDS.Split(',') }
+          if ($env:EVENT -eq 'pull_request') { $params.AllowPlaceholderIdentity = $true; $params.SideloadPublisher = $env:TEST_SUBJECT }
+          if ($env:IN_NAME) { $params.StoreName = $env:IN_NAME }
+          if ($env:IN_PUBLISHER) { $params.StorePublisher = $env:IN_PUBLISHER }
+          if ($env:IN_PUBLISHER_DISPLAY) { $params.StorePublisherDisplayName = $env:IN_PUBLISHER_DISPLAY }
+          if ($env:PFX_PATH) {
+            $params.PfxPath = $env:PFX_PATH
+            $params.PfxPassword = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+          }
+          ./desktop/msix/build-msix.ps1 @params
+
+      - name: Smoke test (install, launch, bundled node, job object)
+        id: smoke
+        if: steps.plan.outputs.smoke == 'true' && steps.build.outputs.sideload_signed == 'true'
+        # Not yet proven on the hosted image (needs WebView2 + an interactive desktop): report, don't block.
+        continue-on-error: true
+        shell: pwsh
+        env:
+          MSIX: ${{ steps.build.outputs.sideload }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: ./desktop/msix/smoke-test.ps1 -MsixPath $env:MSIX -CerPath "desktop/out/msix/SochaDiff-sideload_$env:VERSION.cer"
+
+      - name: Delete certificate files
+        if: always()
+        shell: pwsh
+        env:
+          PFX_PATH: ${{ steps.pfx.outputs.path }}
+          TEST_PFX_PATH: ${{ steps.testpfx.outputs.path }}
+        run: |
+          foreach ($p in $env:PFX_PATH, $env:TEST_PFX_PATH) { if ($p) { Remove-Item -Force -LiteralPath $p -ErrorAction SilentlyContinue } }
+
+      - name: Summary
+        if: always() && steps.build.outcome == 'success'
+        shell: pwsh
+        env:
+          SMOKE: ${{ steps.smoke.outcome }}
+        run: |
+          $info = Get-Content desktop/out/msix/msix-info.json -Raw | ConvertFrom-Json
+          $lines = @("### Socha Diff MSIX $($info.version)", '', "Payload: $($info.payloadFiles) files, $([math]::Round($info.payloadBytes / 1MB, 1)) MB uncompressed (bundled Node $($info.node.version))", '')
+          foreach ($p in $info.packages.PSObject.Properties) {
+            $lines += "- **$($p.Name)**: ``$($p.Value.file)`` $([math]::Round($p.Value.bytes / 1MB, 1)) MB, identity ``$($p.Value.name)`` / ``$($p.Value.publisher)``"
+          }
+          $lines += '', "Smoke test: $(if ($env:SMOKE) { $env:SMOKE } else { 'not run' })"
+          $lines | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload build info
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: msix-info-${{ steps.plan.outputs.version }}
+          path: desktop/out/msix/msix-info.json
+          retention-days: 7
+
+      - name: Upload Store package (.msixupload)
+        if: github.event_name == 'workflow_dispatch' && steps.build.outputs.store != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: sochadiff-msix-store-${{ steps.plan.outputs.version }}
+          path: ${{ steps.build.outputs.store }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload sideload package (.msix + .cer)
+        if: github.event_name == 'workflow_dispatch' && steps.build.outputs.sideload != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: sochadiff-msix-sideload-${{ steps.plan.outputs.version }}
+          path: |
+            ${{ steps.build.outputs.sideload }}
+            desktop/out/msix/SochaDiff-sideload_${{ steps.plan.outputs.version }}.cer
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 30

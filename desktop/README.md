@@ -17,6 +17,11 @@ It is **framework-dependent**: the app download is only the host plus the web ap
 The download page (`site/`, published to https://sochadiff.socha3.com/) lists them with
 links, sizes and "check what you have" commands.
 
+A second, separate channel packages the same app as **MSIX for the Microsoft Store**
+(self-contained .NET, bundled pinned `node.exe`, so no prerequisites except WebView2). It is built
+only by the manual workflow `.github/workflows/package-msix.yml` and does not change anything
+below; see [STORE.md](STORE.md).
+
 ```
 desktop/
   SochaDiff.sln
@@ -31,7 +36,10 @@ desktop/
   scripts/encode-demos.sh          encodes those captures to site/assets/*.webp + GIF fallbacks
   scripts/record-demo.js           legacy: the old demo video (site no longer uses it)
   bundle/                          git-ignored staging folder (created by the scripts)
-  out/                             git-ignored publish-site output
+  out/                             git-ignored publish-site output (and out/msix/ from build-msix.ps1)
+  msix/                            Microsoft Store packaging: Package.appxmanifest, identity.json,
+                                   Assets/ (+ generate-assets.sh), build-msix.ps1, smoke-test.ps1 (STORE.md)
+  STORE.md                         MSIX/Store design, risks and Partner Center steps
   SochaDiff.Desktop/
     SochaDiff.Desktop.csproj       net10.0-windows, win-x64, framework-dependent, Microsoft.Web.WebView2
     App.xaml(.cs)                  palette, unhandled-exception logging
@@ -40,11 +48,14 @@ desktop/
     NodeLocator.cs                 finds the user's Node.js (>= 20)
     JobObject.cs                   KILL_ON_JOB_CLOSE job for node.exe
     AppPaths.cs                    %LOCALAPPDATA%\SochaDiff paths, web app folder choice (bundle / Debug repo fallback / SOCHA_APP_DIR)
+    PackageIdentity.cs             MSIX package identity check (packaged builds prefer the bundled node.exe)
     Properties/PublishProfiles/
       ClickOnce.pubxml             https://sochadiff.socha3.com/, framework-dependent
       Folder.pubxml                plain framework-dependent folder, for local testing
+      Msix.pubxml                  self-contained folder, the MSIX payload (build-msix.ps1 only)
 ../site/                           the static download page (vanilla HTML/CSS/JS, web.config)
 ../.github/workflows/publish-desktop.yml   publishes on every push to main
+../.github/workflows/package-msix.yml      MSIX packages: manual (+ build check on PRs), never deploys
 ```
 
 ## Prepare the bundle
@@ -134,7 +145,8 @@ Other dev overrides (environment variables read by the host):
 
 ## How it runs
 
-- **Node.js**: `NodeLocator` looks, in order, at `SOCHA_NODE` (or `SOCHA_DESKTOP_NODE`),
+- **Node.js**: in the MSIX package only (package identity, `PackageIdentity.cs`), the bundled
+  `node\node.exe` is tried first. Otherwise (ClickOnce, folder, dev) `NodeLocator` looks, in order, at `SOCHA_NODE` (or `SOCHA_DESKTOP_NODE`),
   `node\node.exe` next to the exe (portable builds only), `node.exe` on PATH (process PATH
   plus machine and user PATH re-read from the registry, so a Node installed while the app
   shows its error panel is found on **Retry**), `%ProgramFiles%\nodejs` and

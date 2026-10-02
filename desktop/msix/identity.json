@@ -1,0 +1,15 @@
+{
+  "comment": "MSIX package identities used by build-msix.ps1. 'store' MUST be copied from Partner Center (Apps and games -> Socha Diff -> Product management -> Product identity): Package/Identity/Name, Package/Identity/Publisher and Package/Properties/PublisherDisplayName, character for character. Values containing PLACEHOLDER make the Store build refuse to run (the workflow then skips the .msixupload). 'sideload' is the local test identity: Publisher must equal the Subject of the signing certificate (the self-signed Socha3 cert, CN=Socha3), so the sideload .msix can be signed with the existing SIGNING_PFX_BASE64/SIGNING_PFX_PASSWORD secrets. Its Name differs from the Store one, so a sideloaded test build and the Store app install side by side.",
+  "store": {
+    "name": "PLACEHOLDER.SochaDiff",
+    "publisher": "CN=PLACEHOLDER-PARTNER-CENTER-PUBLISHER",
+    "publisherDisplayName": "PLACEHOLDER Publisher display name",
+    "displayName": "Socha Diff"
+  },
+  "sideload": {
+    "name": "Socha3.SochaDiff.Sideload",
+    "publisher": "CN=Socha3",
+    "publisherDisplayName": "Socha3",
+    "displayName": "Socha Diff (sideload test)"
+  }
+}
