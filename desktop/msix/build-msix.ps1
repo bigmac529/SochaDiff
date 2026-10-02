@@ -83,7 +83,8 @@ $workDir    = Join-Path $OutDir 'work'
 function Write-Step([string]$Text) { Write-Host "`n=== $Text" -ForegroundColor Cyan }
 function Invoke-Tool([string]$Exe, [string[]]$Arguments, [string]$Display) {
   Write-Host "> $(Split-Path -Leaf $Exe) $(if ($Display) { $Display } else { $Arguments -join ' ' })"
-  & $Exe @Arguments
+  # Out-Host: tool output must not become part of a function's return value.
+  & $Exe @Arguments | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "$(Split-Path -Leaf $Exe) failed with exit code $LASTEXITCODE" }
 }
 
