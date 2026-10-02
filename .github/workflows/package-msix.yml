@@ -10,7 +10,7 @@
 #       version  : <major>.<minor>.<build_number input or run number>.0 (4th part 0, as the Store requires).
 #   pull_request (desktop/web app changes) -> windows-latest build check: both packages with the
 #       placeholder identity, sideload signed with a throwaway certificate created in the job, then
-#       installed, launched and checked (smoke-test.ps1). No repository secrets are read for PRs and
+#       installed, launched and checked (smoke-test.ps1, blocking). No repository secrets are read for PRs and
 #       no artifacts except msix-info.json are uploaded.
 #   public repo: every job runs on GitHub-hosted windows-latest ONLY. Never add the self-hosted
 #       runner (labels self-hosted/sochadiff) to this workflow: it runs pull request code.
@@ -180,8 +180,8 @@ jobs:
       - name: Smoke test (install, launch, bundled node, job object)
         id: smoke
         if: steps.plan.outputs.smoke == 'true' && steps.build.outputs.sideload_signed == 'true'
-        # Not yet proven on the hosted image (needs WebView2 + an interactive desktop): report, don't block.
-        continue-on-error: true
+        # Passes on the hosted image (Windows Server 2025, WebView2 present, interactive desktop). If a
+        # runner image change ever breaks it for reasons outside the app, set continue-on-error: true.
         shell: pwsh
         env:
           MSIX: ${{ steps.build.outputs.sideload }}

@@ -866,6 +866,9 @@ Added on branch `feat/wpf-host`. Full details are in `desktop/README.md`.
   continue-on-error; no secrets, only msix-info.json uploaded). windows-latest only, `contents: read`,
   actions: checkout, setup-dotnet, upload-artifact. actionlint 1.7.12 clean.
 - `site/privacy.html` (required: Store policy 10.5.1 for Win32/Desktop Bridge products) + footer links.
-- Not yet done: any run on real Windows beyond the PR check; Partner Center account/reservation;
-  Open/Open with/job breakaway test in the packaged build.
+- Verified 2026-10-01 by the PR check on windows-latest (Server 2025): makepri/makeappx/signtool OK,
+  .msix 94.6 MB, install + launch, `host: MSIX package ...`, bundled node used, server ready, WebView2
+  navigates, log virtualized to `Packages\<family>\LocalCache\Local\SochaDiff`, node dies with the host.
+- Not yet done: Windows 10/11 client test, WACK, Partner Center account/reservation, Open/Open with/job
+  breakaway test in the packaged build.
 

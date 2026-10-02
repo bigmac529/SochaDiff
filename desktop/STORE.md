@@ -5,10 +5,14 @@ release on https://sochadiff.socha3.com/. Nothing about ClickOnce changes: `publ
 `ClickOnce.pubxml`, `publish-site.ps1` and the framework-dependent build are untouched, and the MSIX
 workflow is manual (plus a build-only check on pull requests).
 
-> Status (2026-10-01): packaging, assets and workflow are written and checked on Linux (compile,
-> self-contained publish layout and size, manifest XML, script parsing, actionlint). **Nothing has
-> been built with makeappx or installed on real Windows yet**; the PR check on `windows-latest` is the
-> first real run. Partner Center values are placeholders until the name is reserved.
+> Status (2026-10-01): the PR check on GitHub-hosted `windows-latest` (Windows Server 2025, SDK
+> 10.0.26100) builds both packages with makepri/makeappx, signs the sideload one, installs it,
+> launches it and passes the smoke test: package identity detected, the bundled node 24.21.0 from
+> `C:\Program Files\WindowsApps\...\node\node.exe` serves the app, WebView2 navigates, the log
+> lands in the virtualized `...\Packages\<family>\LocalCache\Local\SochaDiff\`, and killing
+> `SochaDiff.exe` kills node. **Not yet tested on a Windows 10/11 client PC**, not run through the
+> Windows App Certification Kit, and Open/Open with from the packaged app are untested. Partner
+> Center values are placeholders until the name is reserved.
 
 ## What is in the package
 
@@ -19,7 +23,7 @@ workflow is manual (plus a build-only check on pull requests).
 | WebView2 | prerequisite (built into Windows 11) | same (Evergreen runtime, built into Windows 11; Windows 10 usually has it via Edge) |
 | Updates | ClickOnce checks the site at every start | the Store updates the package; no update code in the app |
 | Signing | self-signed `CN=Socha3` | Store: signed by Microsoft. Sideload test: `CN=Socha3` |
-| Size | ~6 MB | ~237 MB installed (842 files: .NET ~139 MB, node.exe ~94 MB, web app ~4 MB); ~97 MB compressed (measured with a zip of the same payload; the .msix should be similar) |
+| Size | ~6 MB | ~237 MB installed (842 files: .NET ~139 MB, node.exe ~94 MB, web app ~4 MB); **.msix / .msixupload 94.6 MB** (first CI build) |
 
 Files:
 
@@ -130,7 +134,8 @@ which the app never does.
   normal close. **Risk to test:** that apps opened via Open/Open with survive closing Socha Diff in the
   packaged build too (breakaway must be allowed by every job in the chain).
 - `smoke-test.ps1` (run by the workflow) checks package identity, that the bundled node is used and
-  serves `/api/health`, and that killing `SochaDiff.exe` kills node. It does not click Open/Open with.
+  serves `/api/health`, and that killing `SochaDiff.exe` kills node; all of that passed on
+  windows-latest. It does not click Open/Open with.
 
 ## Step by step for Michael
 
